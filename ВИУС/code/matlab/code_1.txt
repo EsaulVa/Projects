@@ -1,0 +1,1140 @@
+classdef QuinticSplineGeometry < handle
+    %QUINTICSPLINEGEOMETRY Математический движок для квинтических сплайнов.
+    % Не хранит состояние. Предназначен для вычисления коэффициентов и значений.
+    
+    methods
+        function coeffs = getSegmentCoeffs(obj, yi, mi, Mi, yip1, mip1, Mip1, h)
+            % Вычисление коэффициентов a3, a4, a5 для сегмента
+            B = [yip1 - (yi + mi*h + 0.5*Mi*h^2);
+                 mip1 - (mi + Mi*h);
+                 Mip1 - Mi];
+                 
+            A = [h^3, h^4, h^5;
+                 3*h^2, 4*h^3, 5*h^4;
+                 6*h, 12*h^2, 20*h^3];
+            
+            coeffs = A \ B;
+        end
+        
+        function val = evalValue(obj, t, yi, mi, Mi, coeffs)
+            val = yi + mi*t + 0.5*Mi*t.^2 + coeffs(1)*t.^3 + coeffs(2)*t.^4 + coeffs(3)*t.^5;
+        end
+        
+        function val = evalDeriv1(obj, t, mi, Mi, coeffs)
+            val = mi + Mi*t + 3*coeffs(1)*t.^2 + 4*coeffs(2)*t.^3 + 5*coeffs(3)*t.^4;
+        end
+        
+        function val = evalDeriv2(obj, t, Mi, coeffs)
+            val = Mi + 6*coeffs(1)*t + 12*coeffs(2)*t.^2 + 20*coeffs(3)*t.^3;
+        end
+    end
+end
+
+
+classdef PolarSmoothingSplineCoupledNew < handle
+    %POLARSMOOTHINGSPLINE Оптимизатор сплайна с поддержкой связанных ГУ.
+    
+    properties
+        u           % Параметр
+        r_data      % Данные
+        phi_data
+        n           % Кол-во точек
+        
+        geom_r      % Движок геометрии
+        geom_phi
+        
+        % Результаты
+        results     
+        
+        % Карта оптимизации
+        map         % .indices, .fixed_vals, .links
+    end
+    
+    methods
+        function obj = PolarSmoothingSplineCoupledNew(x, y)
+            obj.n = length(x);
+            obj.geom_r = Splines.QuinticSplineGeometry();
+            obj.geom_phi = Splines.QuinticSplineGeometry();
+            
+            dists = sqrt(diff(x).^2 + diff(y).^2);
+            obj.u = [0; cumsum(dists)];
+            
+            obj.r_data = sqrt(x.^2 + y.^2);
+            obj.phi_data = unwrap(atan2(y, x));
+        end
+        
+%         function setBC(obj, bc_start, bc_end)
+%             % ... (код метода setBC остается без изменений) ...
+%             % (для краткости я сократил вывод, но в файле он должен быть полным)
+%             n = obj.n;
+%             map_size = 6 * n;
+%             status = zeros(map_size, 1);
+%             fixed_vals = zeros(map_size, 1);
+%             links = struct('dep_idx', {}, 'prim_idx', {}, 'C', {});
+%             
+%             function process_node(idx, bc, prefix, shift)
+%                 idx_v = shift + idx;
+%                 idx_m = shift + n + idx;
+%                 idx_M = shift + 2*n + idx;
+%                 
+%                 if isfield(bc, prefix) && isfield(bc.(prefix), 'value')
+%                     val = bc.(prefix).value;
+%                     if isnumeric(val) && ~isnan(val)
+%                         status(idx_v) = 1; fixed_vals(idx_v) = val;
+%                     end
+%                 end
+%                 
+%                 if isfield(bc, prefix) && isfield(bc.(prefix), 'deriv1')
+%                     deriv_spec = bc.(prefix).deriv1;
+%                     if isstruct(deriv_spec) && isfield(deriv_spec, 'coupling')
+%                         C_val = deriv_spec.coupling;
+%                         if strcmp(prefix, 'r')
+%                             dep_idx = idx_m; prim_idx = idx_m + 3*n;
+%                         else
+%                             dep_idx = idx_m; prim_idx = idx_m - 3*n;
+%                         end
+%                         status(dep_idx) = 2;
+%                         links(end+1) = struct('dep_idx', dep_idx, 'prim_idx', prim_idx, 'C', C_val);
+%                     elseif isnumeric(deriv_spec) && isnan(deriv_spec)
+%                         status(idx_m) = 0;
+%                     else
+%                         status(idx_m) = 1; fixed_vals(idx_m) = deriv_spec;
+%                     end
+%                 end
+%                 
+%                 if isfield(bc, prefix) && isfield(bc.(prefix), 'deriv2')
+%                     val = bc.(prefix).deriv2;
+%                     if isnumeric(val) && isnan(val)
+%                         status(idx_M) = 0;
+%                     elseif isnumeric(val)
+%                         status(idx_M) = 1; fixed_vals(idx_M) = val;
+%                     end
+%                 end
+%                 
+%                 % Внутри метода setBC, в функции process_node:
+% 
+%                 % --- Обработка второй производной (Deriv2) ---
+%                 if isfield(bc, prefix) && isfield(bc.(prefix), 'deriv2')
+%                     val_spec = bc.(prefix).deriv2;
+% 
+%                     % Случай 1: Мягкое условие (Soft Constraint)
+%                     if isstruct(val_spec) && isfield(val_spec, 'target')
+%                         % 1. Переменная остается СВОБОДНОЙ (чтобы оптимизатор мог её крутить)
+%                         status(idx_M) = 0; % Free
+% 
+%                         % 2. Добавляем запись в карту штрафов
+%                         % Структура: индекс переменной, целевое значение, вес
+%                         soft_constraints(end+1) = struct(...
+%                             'var_idx', idx_M, ...
+%                             'target', val_spec.target, ...
+%                             'weight', val_spec.weight, ...
+%                             'type', 'simple'); % тип 'simple' = (val - target)^2
+% 
+%                     % Случай 2: NaN (Free)
+%                     elseif isnumeric(val_spec) && isnan(val_spec)
+%                         status(idx_M) = 0;
+% 
+%                     % Случай 3: Число (Fixed)
+%                     elseif isnumeric(val_spec)
+%                         status(idx_M) = 1;
+%                         fixed_vals(idx_M) = val_spec;
+%                     end
+%                 end
+%             end
+%             
+%             shift_r = 0; shift_phi = 3 * n;
+%             process_node(1, bc_start, 'r', shift_r);
+%             process_node(1, bc_start, 'phi', shift_phi);
+%             process_node(n, bc_end, 'r', shift_r);
+%             process_node(n, bc_end, 'phi', shift_phi);
+%             
+%             % В блоке обработки END условий (в основном теле setBC, после process_node):
+%             if isfield(bc_end, 'y_deriv2')
+%                 spec = bc_end.y_deriv2;
+%                 if isstruct(spec) && isfield(spec, 'target')
+%                     % Все поля, влияющие на y'', должны быть свободными (status=0).
+%                     % Мы это уже сделали через NaN выше.
+% 
+%                     % Добавляем сложный штраф
+%                     soft_constraints(end+1) = struct(...
+%                         'type', 'y_ddx', ... % Специальный тип
+%                         'target', spec.target, ...
+%                         'weight', spec.weight);
+%                 end
+%             end
+%             
+%             obj.map.status = status;
+%             obj.map.fixed_vals = fixed_vals;
+%             obj.map.links = links;
+%             obj.map.free_idx = find(status == 0);
+%         end
+        function setBC(obj, bc_start, bc_end)
+            %SETBC Формирует карту переменных с поддержкой Soft Constraints.
+            %
+            % Структура вектора состояния P (6*n):
+            % [r_v(1..n), r_m(1..n), r_M(1..n), phi_v(1..n), phi_m(1..n), phi_M(1..n)]
+
+            n = obj.n;
+            map_size = 6 * n;
+
+            % Статус: 0=Free, 1=Fixed, 2=Dependent
+            status = zeros(map_size, 1);
+            fixed_vals = zeros(map_size, 1);
+
+            % Массивы для связей и штрафов
+            links = struct('dep_idx', {}, 'prim_idx', {}, 'C', {});
+            soft_constraints = struct('var_idx', {}, 'target', {}, 'weight', {}, 'type', {}, 'node_idx', {});
+
+            % --- Вспомогательная функция обработки одного узла ---
+            function process_node(idx, bc, prefix, shift)
+                % Определяем базовые индексы в полном векторе
+                idx_v = shift + idx;           % Value
+                idx_m = shift + n + idx;       % Deriv1
+                idx_M = shift + 2*n + idx;     % Deriv2
+
+                % === 1. Обработка значения (Value) ===
+                if isfield(bc, prefix) && isfield(bc.(prefix), 'value')
+                    val = bc.(prefix).value;
+
+                    % Проверка на Soft Constraint
+                    if isstruct(val) && isfield(val, 'target')
+                        status(idx_v) = 0; % Free
+                        soft_constraints(end+1) = struct('var_idx', idx_v, 'target', val.target, 'weight', val.weight, 'type', 'simple', 'node_idx', idx);
+
+                    % Обычное Fixed значение
+                    elseif isnumeric(val) && ~isnan(val)
+                        status(idx_v) = 1;      % Fixed
+                        fixed_vals(idx_v) = val;
+                    end
+                end
+
+                % === 2. Обработка первой производной (Deriv1) ===
+                if isfield(bc, prefix) && isfield(bc.(prefix), 'deriv1')
+                    spec = bc.(prefix).deriv1;
+
+                    % Случай A: Линейная связь (Coupling) - r' = C * phi'
+                    if isstruct(spec) && isfield(spec, 'coupling')
+                        C_val = spec.coupling;
+
+                        if strcmp(prefix, 'r')
+                            dep_idx = idx_m;          % r' (зависимая)
+                            prim_idx = idx_m + 3*n;   % phi' (первичная)
+                        else
+                            dep_idx = idx_m;          % phi' (зависимая)
+                            prim_idx = idx_m - 3*n;   % r' (первичная)
+                        end
+
+                        status(dep_idx) = 2;      % Dependent
+                        links(end+1) = struct('dep_idx', dep_idx, 'prim_idx', prim_idx, 'C', C_val);
+
+                    % Случай B: Soft Constraint (Целевое значение с весом)
+                    elseif isstruct(spec) && isfield(spec, 'target')
+                        status(idx_m) = 0; % Free
+                        soft_constraints(end+1) = struct('var_idx', idx_m, 'target', spec.target, 'weight', spec.weight, 'type', 'simple', 'node_idx', idx);
+
+                    % Случай C: Free (NaN)
+                    elseif isnumeric(spec) && isnan(spec)
+                        status(idx_m) = 0;
+
+                    % Случай D: Fixed (Число)
+                    elseif isnumeric(spec)
+                        status(idx_m) = 1;        % Fixed
+                        fixed_vals(idx_m) = spec;
+                    end
+                end
+
+                % === 3. Обработка второй производной (Deriv2) ===
+                if isfield(bc, prefix) && isfield(bc.(prefix), 'deriv2')
+                    spec = bc.(prefix).deriv2;
+
+                    % Случай A: Soft Constraint
+                    if isstruct(spec) && isfield(spec, 'target')
+                        status(idx_M) = 0; % Free
+                        soft_constraints(end+1) = struct('var_idx', idx_M, 'target', spec.target, 'weight', spec.weight, 'type', 'simple', 'node_idx', idx);
+
+                    % Случай B: Free
+                    elseif isnumeric(spec) && isnan(spec)
+                        status(idx_M) = 0;
+
+                    % Случай C: Fixed
+                    elseif isnumeric(spec)
+                        status(idx_M) = 1;
+                        fixed_vals(idx_M) = spec;
+                    end
+                end
+            end
+
+            % === Обработка комплексных условий (y_deriv2) ===
+            % Эти условия затрагивают несколько переменных одновременно (r, phi и их производные)
+            function process_complex_bc(bc, node_idx)
+                if isfield(bc, 'y_deriv2')
+                    spec = bc.y_deriv2;
+                    if isstruct(spec) && isfield(spec, 'target')
+                        % Для этого условия переменные должны быть свободны (status=0).
+                        % Мы не проверяем это здесь явно, но предполагаем, что 
+                        % в bc для переменных (deriv2) передано NaN или Soft.
+
+                        % Добавляем запись о штрафе
+                        soft_constraints(end+1) = struct(...
+                            'var_idx', NaN, ... % Нет одной переменной
+                            'target', spec.target, ...
+                            'weight', spec.weight, ...
+                            'type', 'y_ddx', ... % Специальный тип
+                            'node_idx', node_idx);
+                    end
+                end
+            end
+
+            % Сдвиги блоков в векторе состояния
+            shift_r = 0;
+            shift_phi = 3 * n;
+
+            % Обработка границ
+            process_node(1, bc_start, 'r', shift_r);
+            process_node(1, bc_start, 'phi', shift_phi);
+            process_complex_bc(bc_start, 1); % Если нужно условие на кривизну в начале
+
+            process_node(n, bc_end, 'r', shift_r);
+            process_node(n, bc_end, 'phi', shift_phi);
+            process_complex_bc(bc_end, n);   % Условие на кривизну в конце
+
+            % Сохраняем результаты в свойства объекта
+            obj.map.status = status;
+            obj.map.fixed_vals = fixed_vals;
+            obj.map.links = links;
+            obj.map.soft_constraints = soft_constraints; % Новое поле
+
+            % Индексы для оптимизатора (статус 0 = Free)
+            obj.map.free_idx = find(status == 0);
+        end
+        function val = compute_velocity_error(obj, t, h, vr, mr, Mr, cr, vp, mp, Mp, cp)
+            r   = obj.geom_r.evalValue(t, vr, mr, Mr, cr);
+            r1  = obj.geom_r.evalDeriv1(t, mr, Mr, cr);
+            phi1 = obj.geom_phi.evalDeriv1(t, mp, Mp, cp);
+            r_phi1=(r.*phi1);
+            v_sq = r1.^2 + r_phi1.^2;
+            v = sqrt(v_sq);
+            val = (v - 1).^2;
+        end
+        
+        function val = compute_segment_energy(obj, t, h, vr, mr, Mr, cr, vp, mp, Mp, cp)
+            r   = obj.geom_r.evalValue(t, vr, mr, Mr, cr);
+            r1  = obj.geom_r.evalDeriv1(t, mr, Mr, cr);
+            r2  = obj.geom_r.evalDeriv2(t, Mr, cr);
+            phi1 = obj.geom_phi.evalDeriv1(t, mp, Mp, cp);
+            phi2 = obj.geom_phi.evalDeriv2(t, Mp, cp);
+            acc_r = r2 - r .* (phi1.^2);
+            acc_phi = r .* phi2 + 2 .* r1 .* phi1;
+            val = acc_r.^2 + acc_phi.^2;
+        end
+        
+        % === НОВЫЙ МЕТОД ===
+        function val = compute_jerk_node_error(obj, coeffs_left, coeffs_right, h_left)
+            % Вычисляет квадрат разности третьих производных на стыке сегментов.
+            % S'''(t) = 6*a3 + 24*a4*t + 60*a5*t^2
+            
+            % 1. Левый сегмент (конец, t = h_left)
+            d3_left = 6*coeffs_left(1) + 24*coeffs_left(2)*h_left + 60*coeffs_left(3)*h_left^2;
+            
+            % 2. Правый сегмент (начало, t = 0)
+            d3_right = 6*coeffs_right(1);
+            
+            % Возвращаем квадрат невязки
+            val = (d3_left - d3_right)^2;
+        end
+        
+%         function J = objective(obj, vars_opt, alpha, beta, gamma)
+%             % 1. Восстановление полного вектора состояния P
+%             P_full = obj.map.fixed_vals; 
+%             P_full(obj.map.free_idx) = vars_opt;
+%             
+%             for k = 1:length(obj.map.links)
+%                 link = obj.map.links(k);
+%                 prim_val = P_full(link.prim_idx);
+%                 P_full(link.dep_idx) = link.C * prim_val;
+%             end
+%             
+%             % 2. Распаковка
+%             n = obj.n;
+%             v_r   = P_full(1:n);
+%             m_r   = P_full(n+1:2*n);
+%             M_r   = P_full(2*n+1:3*n);
+%             v_phi = P_full(3*n+1:4*n);
+%             m_phi = P_full(4*n+1:5*n);
+%             M_phi = P_full(5*n+1:6*n);
+%             
+%             % 3. Функционал энергии
+%             J_fid = sum((v_r - obj.r_data).^2 + v_r.^2 .* (v_phi - obj.phi_data).^2);
+%             J_smooth = 0;
+%             J_param = 0;
+%             J_jerk = 0; % Инициализация
+%             
+%             % Переменные для хранения коэффициентов предыдущего сегмента
+%             coeffs_r_prev = [];
+%             coeffs_phi_prev = [];
+%             h_prev = 0;
+%             
+%             for i = 1:n-1
+%                 h = obj.u(i+1) - obj.u(i);
+%                 
+%                 coeffs_r = obj.geom_r.getSegmentCoeffs(v_r(i), m_r(i), M_r(i), v_r(i+1), m_r(i+1), M_r(i+1), h);
+%                 coeffs_phi = obj.geom_phi.getSegmentCoeffs(v_phi(i), m_phi(i), M_phi(i), v_phi(i+1), m_phi(i+1), M_phi(i+1), h);
+%                 
+%                 % --- Smoothness Term ---
+%                 fun = @(t) obj.compute_segment_energy(t, h, ...
+%                     v_r(i), m_r(i), M_r(i), coeffs_r, ...
+%                     v_phi(i), m_phi(i), M_phi(i), coeffs_phi);
+%                 J_smooth = J_smooth + integral(fun, 0, h);
+%                 
+%                 % --- Parametrization Term ---
+%                 fun_param = @(t) obj.compute_velocity_error(t, h, ...
+%                     v_r(i), m_r(i), M_r(i), coeffs_r, ...
+%                     v_phi(i), m_phi(i), M_phi(i), coeffs_phi);
+%                 J_param = J_param + integral(fun_param, 0, h);
+%                 
+%                 % --- Jerk Term (Связность C3) ---
+%                 % Вычисляем только если есть предыдущий сегмент (узлы i=2..n-1)
+%                 if i > 1
+%                     % Ошибка в узле i (стык сегмента i-1 и i)
+%                     err_r = obj.compute_jerk_node_error(coeffs_r_prev, coeffs_r, h_prev);
+%                     err_phi = obj.compute_jerk_node_error(coeffs_phi_prev, coeffs_phi, h_prev);
+%                     J_jerk = J_jerk + err_r + err_phi;
+%                 end
+%                 
+%                 % Запоминаем текущие коэффициенты для следующей итерации
+%                 coeffs_r_prev = coeffs_r;
+%                 coeffs_phi_prev = coeffs_phi;
+%                 h_prev = h;
+%             end
+%             
+%             J = alpha * J_fid + (1 - alpha) * J_smooth + beta * J_param + gamma * J_jerk;
+%             
+%              % === Обработка мягких ограничений ===
+%             if isfield(obj.map, 'soft_constraints')
+%                 constraints = obj.map.soft_constraints;
+%                 for k = 1:length(constraints)
+%                     con = constraints(k);
+% 
+%                     % Тип 1: Простое соответствие переменной значению
+%                     if strcmp(con.type, 'simple')
+%                         val = P_full(con.var_idx);
+%                         penalty = (val - con.target)^2;
+%                         J = J + con.weight * penalty;
+% 
+%                     % Тип 2: Геометрическое условие y''(x)
+%                     elseif strcmp(con.type, 'y_ddx')
+%                         % Берем данные с КОНЦА сплайна (узел n)
+%                         n = obj.n;
+%                         r     = P_full(1:n);      % Массив r
+%                         phi   = P_full(3*n+1:4*n); % Массив phi
+%                         r1    = P_full(n+1:2*n);
+%                         phi1  = P_full(4*n+1:5*n);
+%                         r2    = P_full(2*n+1:3*n);
+%                         phi2  = P_full(5*n+1:6*n);
+% 
+%                         % Значения в последнем узле
+%                         rn = r(n); phin = phi(n);
+%                         r1n = r1(n); phi1n = phi1(n);
+%                         r2n = r2(n); phi2n = phi2(n);
+% 
+%                         % Формула для y''(x) при y'(x)=0 (горизонтальная касательная)
+%                         % y'' = a_r * sin(phi) + a_phi * cos(phi)
+%                         ar = r2n - rn * (phi1n^2);
+%                         aphi = rn * phi2n + 2 * r1n * phi1n;
+% 
+%                         y2_val = ar * sin(phin) + aphi * cos(phin);
+% 
+%                         penalty = (y2_val - con.target)^2;
+%                         J = J + con.weight * penalty;
+%                     end
+%                 end
+%             end
+%         end
+        
+%         function J = objective(obj, vars_opt, alpha, beta, gamma)
+%     %OBJECTIVE Целевая функция оптимизации.
+%     % Включает: Fidelity, Smoothness, Parametrization, Jerk, Soft Constraints.
+%     
+%     % --- 1. Восстановление полного вектора состояния P ---
+%     P_full = obj.map.fixed_vals; 
+%     P_full(obj.map.free_idx) = vars_opt;
+%     
+%     % --- 2. Вычисление зависимых переменных (Links) ---
+%     % Применяем связи: m_r = C * m_phi и т.д.
+%     for k = 1:length(obj.map.links)
+%         link = obj.map.links(k);
+%         prim_val = P_full(link.prim_idx);
+%         P_full(link.dep_idx) = link.C * prim_val;
+%     end
+%     
+%     % --- 3. Распаковка в массивы ---
+%     n = obj.n;
+%     v_r   = P_full(1:n);
+%     m_r   = P_full(n+1:2*n);
+%     M_r   = P_full(2*n+1:3*n);
+%     
+%     v_phi = P_full(3*n+1:4*n);
+%     m_phi = P_full(4*n+1:5*n);
+%     M_phi = P_full(5*n+1:6*n);
+%     
+%     % --- 4. Вычисление базовых функционалов ---
+%     
+%     % Fidelity (Штраф за невязку данных)
+%     J_fid = sum((v_r - obj.r_data).^2 + v_r.^2 .* (v_phi - obj.phi_data).^2);
+%     
+%     J_smooth = 0;
+%     J_param = 0;
+%     J_jerk = 0;
+%     
+%     coeffs_r_prev = [];
+%     coeffs_phi_prev = [];
+%     h_prev = 0;
+%     
+%     % Цикл по сегментам
+%     for i = 1:n-1
+%         h = obj.u(i+1) - obj.u(i);
+%         
+%         % Коэффициенты сегмента
+%         coeffs_r = obj.geom_r.getSegmentCoeffs(v_r(i), m_r(i), M_r(i), v_r(i+1), m_r(i+1), M_r(i+1), h);
+%         coeffs_phi = obj.geom_phi.getSegmentCoeffs(v_phi(i), m_phi(i), M_phi(i), v_phi(i+1), m_phi(i+1), M_phi(i+1), h);
+%         
+%         % -- Smoothness (Энергия изгиба) --
+%         fun = @(t) obj.compute_segment_energy(t, h, ...
+%             v_r(i), m_r(i), M_r(i), coeffs_r, ...
+%             v_phi(i), m_phi(i), M_phi(i), coeffs_phi);
+%         J_smooth = J_smooth + integral(fun, 0, h);
+%         
+%         % -- Parametrization (Штраф |v|-1) --
+%         fun_param = @(t) obj.compute_velocity_error(t, h, ...
+%             v_r(i), m_r(i), M_r(i), coeffs_r, ...
+%             v_phi(i), m_phi(i), M_phi(i), coeffs_phi);
+%         J_param = J_param + integral(fun_param, 0, h);
+%         
+%         % -- Jerk (Непрерывность 3-й производной) --
+%         if i > 1
+%             err_r = obj.compute_jerk_node_error(coeffs_r_prev, coeffs_r, h_prev);
+%             err_phi = obj.compute_jerk_node_error(coeffs_phi_prev, coeffs_phi, h_prev);
+%             J_jerk = J_jerk + err_r + err_phi;
+%         end
+%         
+%         % Запоминаем текущие коэффициенты для следующего шага
+%         coeffs_r_prev = coeffs_r;
+%         coeffs_phi_prev = coeffs_phi;
+%         h_prev = h;
+%     end
+%     
+%     % --- 5. Обработка Soft Constraints (Мягкие ограничения) ---
+%     J_bc = 0;
+%     
+%     if isfield(obj.map, 'soft_constraints')
+%         constraints = obj.map.soft_constraints;
+%         
+%         for k = 1:length(constraints)
+%             con = constraints(k);
+%             
+%             % -- Тип 1: Простое соответствие переменной значению --
+%             if strcmp(con.type, 'simple')
+%                 val = P_full(con.var_idx);
+%                 penalty = (val - con.target)^2;
+%                 J_bc = J_bc + con.weight * penalty;
+%             
+%             % -- Тип 2: Геометрическая кривизна y''(x) --
+%             elseif strcmp(con.type, 'y_ddx')
+%                 idx = con.node_idx;
+%                 
+%                 % Извлекаем данные для узла idx
+%                 r_val   = P_full(idx);
+%                 phi_val = P_full(3*n + idx);
+%                 r1_val  = P_full(n + idx);
+%                 phi1_val= P_full(4*n + idx);
+%                 r2_val  = P_full(2*n + idx);
+%                 phi2_val= P_full(5*n + idx);
+%                 
+%                 % Компоненты скорости (v_r, v_phi)
+%                 vr = r1_val;
+%                 vp = r_val * phi1_val;
+%                 
+%                 % Компоненты ускорения (a_r, a_phi)
+%                 ar = r2_val - r_val * (phi1_val^2);
+%                 ap = r_val * phi2_val + 2 * r1_val * phi1_val;
+%                 
+%                 % Декартовы компоненты скорости и ускорения
+%                 cos_p = cos(phi_val);
+%                 sin_p = sin(phi_val);
+%                 
+%                 x_u = vr * cos_p - vp * sin_p; % x'
+%                 y_u = vr * sin_p + vp * cos_p; % y'
+%                 
+%                 x_uu = ar * cos_p - ap * sin_p; % x''
+%                 y_uu = ar * sin_p + ap * cos_p; % y''
+%                 
+%                 % Формула y''(x) = (y'' * x' - y' * x'') / (x')^3
+%                 % Защита от деления на ноль (вертикальная касательная)
+%                 if abs(x_u) > 1e-6
+%                     y_ddx = (y_uu * x_u - y_u * x_uu) / (x_u^3);
+%                 else
+%                     % Если касательная вертикальна, условие y''(x) некорректно,
+%                     % можно штрафовать бесконечность или просто пропустить
+%                     y_ddx = 0; 
+%                 end
+%                 
+%                 penalty = (y_ddx - con.target)^2;
+%                 J_bc = J_bc + con.weight * penalty;
+%             end
+%         end
+%     end
+%     
+%     % --- 6. Итоговая сумма ---
+%     J = alpha * J_fid + (1 - alpha) * J_smooth + beta * J_param + gamma * J_jerk + J_bc;
+% end
+        function J = objective(obj, vars_opt, alpha, beta, gamma)
+    % ... (начало метода: восстановление P_full, распаковка, вычисление J_fid, J_smooth, J_param, J_jerk - БЕЗ ИЗМЕНЕНИЙ) ...
+    % Вставь сюда код из предыдущего ответа до блока Soft Constraints.
+    
+    % === Сохраняем старый код для целостности, но с улучшениями ===
+    
+    % --- 1. Восстановление P_full ---
+    P_full = obj.map.fixed_vals; 
+    P_full(obj.map.free_idx) = vars_opt;
+    for k = 1:length(obj.map.links)
+        link = obj.map.links(k);
+        P_full(link.dep_idx) = link.C * P_full(link.prim_idx);
+    end
+    
+    % --- 2. Распаковка ---
+    n = obj.n;
+    v_r   = P_full(1:n); m_r = P_full(n+1:2*n); M_r = P_full(2*n+1:3*n);
+    v_phi = P_full(3*n+1:4*n); m_phi = P_full(4*n+1:5*n); M_phi = P_full(5*n+1:6*n);
+    
+    % --- 3. Базовые функционалы ---
+    J_fid = sum((v_r - obj.r_data).^2 + v_r.^2 .* (v_phi - obj.phi_data).^2);
+    J_smooth = 0; J_param = 0; J_jerk = 0;
+    
+    coeffs_r_prev = []; coeffs_phi_prev = []; h_prev = 0;
+    
+    for i = 1:n-1
+        h = obj.u(i+1) - obj.u(i);
+        coeffs_r = obj.geom_r.getSegmentCoeffs(v_r(i), m_r(i), M_r(i), v_r(i+1), m_r(i+1), M_r(i+1), h);
+        coeffs_phi = obj.geom_phi.getSegmentCoeffs(v_phi(i), m_phi(i), M_phi(i), v_phi(i+1), m_phi(i+1), M_phi(i+1), h);
+        
+        % Smoothness
+        fun = @(t) obj.compute_segment_energy(t, h, v_r(i), m_r(i), M_r(i), coeffs_r, v_phi(i), m_phi(i), M_phi(i), coeffs_phi);
+        J_smooth = J_smooth + integral(fun, 0, h);
+        
+        % Parametrization
+        fun_param = @(t) obj.compute_velocity_error(t, h, v_r(i), m_r(i), M_r(i), coeffs_r, v_phi(i), m_phi(i), M_phi(i), coeffs_phi);
+        J_param = J_param + integral(fun_param, 0, h);
+        
+        % Jerk
+        if i > 1
+            err_r = obj.compute_jerk_node_error(coeffs_r_prev, coeffs_r, h_prev);
+            err_phi = obj.compute_jerk_node_error(coeffs_phi_prev, coeffs_phi, h_prev);
+            J_jerk = J_jerk + err_r + err_phi;
+        end
+        coeffs_r_prev = coeffs_r; coeffs_phi_prev = coeffs_phi; h_prev = h;
+    end
+    
+    % --- 4. Soft Constraints ---
+    J_bc = 0;
+    
+    if isfield(obj.map, 'soft_constraints')
+        constraints = obj.map.soft_constraints;
+        
+        for k = 1:length(constraints)
+            con = constraints(k);
+            
+            if strcmp(con.type, 'simple')
+                val = P_full(con.var_idx);
+                penalty = (val - con.target)^2;
+                J_bc = J_bc + con.weight * penalty;
+                
+            elseif strcmp(con.type, 'y_ddx')
+                idx = con.node_idx;
+                
+                % Извлечение данных для узла
+                r   = P_full(idx);       phi = P_full(3*n + idx);
+                r1  = P_full(n + idx);    phi1 = P_full(4*n + idx);
+                r2  = P_full(2*n + idx);  phi2 = P_full(5*n + idx);
+                
+                % 1. Скорость (v_r, v_phi)
+                vr = r1;
+                vp = r * phi1;
+                
+                % 2. Ускорение (a_r, a_phi)
+                ar = r2 - r * (phi1^2);
+                ap = r * phi2 + 2 * r1 * phi1;
+                
+                % 3. Декартовы компоненты
+                cos_p = cos(phi); sin_p = sin(phi);
+                
+                x_u = vr * cos_p - vp * sin_p; % x'
+                y_u = vr * sin_p + vp * cos_p; % y'
+                
+                % ПРОВЕРКА НА СКОРОСТЬ (ЧТОБЫ ИЗБЕЖАТЬ ДЕЛЕНИЯ НА 0)
+                v_abs = sqrt(x_u^2 + y_u^2);
+                
+                % Если скорость почти ноль, формула y''(x) не работает.
+                % В этом случае штрафуем просто за y''(u) (проекцию ускорения), 
+                % это будет грубое приближение, но стабильное.
+                if v_abs < 0.1 
+                    y_ddx_approx = ar * sin_p + ap * cos_p; % y''(u)
+                    % Добавляем огромный штраф за низкую скорость, так как 
+                    % при низкой скорости условие y''(x) некорректно
+                    penalty = (y_ddx_approx - con.target)^2 + (v_abs - 1)^2 * 100; 
+                else
+                    x_uu = ar * cos_p - ap * sin_p; % x''
+                    y_uu = ar * sin_p + ap * cos_p; % y''
+                    
+                    % Универсальная формула y''(x)
+                    y_ddx = (y_uu * x_u - y_u * x_uu) / (x_u^3);
+                    penalty = (y_ddx - con.target)^2;
+                end
+                
+                J_bc = J_bc + con.weight * penalty;
+            end
+        end
+    end
+    
+    J = alpha * J_fid + (1 - alpha) * J_smooth + beta * J_param + gamma * J_jerk + J_bc;
+end
+        function unpack_results(obj, x_opt)
+            % ... (код без изменений) ...
+            n = obj.n;
+            P_full = obj.map.fixed_vals; 
+            P_full(obj.map.free_idx) = x_opt; 
+            for k = 1:length(obj.map.links)
+                link = obj.map.links(k);
+                prim_val = P_full(link.prim_idx);
+                P_full(link.dep_idx) = link.C * prim_val;
+            end
+            obj.results.r.v = P_full(1:n);
+            obj.results.r.m = P_full(n+1:2*n);
+            obj.results.r.M = P_full(2*n+1:3*n);
+            obj.results.phi.v = P_full(3*n+1:4*n);
+            obj.results.phi.m = P_full(4*n+1:5*n);
+            obj.results.phi.M = P_full(5*n+1:6*n);
+        end
+        
+        function fit(obj, alpha, beta, gamma)
+            % Инициализация
+            n = obj.n;
+            P_init = zeros(6*n, 1);
+            P_init(1:n) = obj.r_data;
+            P_init(3*n+1:4*n) = obj.phi_data;
+            obj.map.fixed_vals = P_init; 
+            
+            x0 = P_init(obj.map.free_idx);
+            
+            fprintf('Запуск оптимизации. Свободных переменных: %d\n', length(x0));
+            options = optimoptions('fminunc', 'Algorithm', 'quasi-newton', 'Display', 'iter', 'MaxIterations', 10000);
+            
+            % Передаем gamma в целевую функцию
+            objFun = @(x) obj.objective(x, alpha, beta, gamma);
+            
+            [x_opt, f_val, flag] = fminunc(objFun, x0, options);
+            fprintf('Оптимизация завершена. Код: %d\n', flag);
+            
+            % Сохранение результатов
+            P_final = obj.map.fixed_vals;
+            P_final(obj.map.free_idx) = x_opt;
+            for k = 1:length(obj.map.links)
+                link = obj.map.links(k);
+                P_final(link.dep_idx) = link.C * P_final(link.prim_idx);
+            end
+            
+            obj.results.r.v = P_final(1:n);
+            obj.results.r.m = P_final(n+1:2*n);
+            obj.results.r.M = P_final(2*n+1:3*n);
+            obj.results.phi.v = P_final(3*n+1:4*n);
+            obj.results.phi.m = P_final(4*n+1:5*n);
+            obj.results.phi.M = P_final(5*n+1:6*n);
+            obj.results.x_opt = x_opt;
+            obj.results.f_val = f_val;
+            obj.unpack_results(x_opt);
+        end
+    end
+end
+
+
+classdef Normalizer
+    properties
+        ScaleFactor = 1  % Значение по умолчанию
+        Center = [0, 0]  % Значение по умолчанию
+    end
+    methods
+        function obj = Normalizer(x, y)
+            % NORMALIZER Конструктор.
+            % Если x, y заданы - вычисляет центр и масштаб автоматически.
+            % Если вызван без аргументов - создается объект с масштабом 1 и центром (0,0),
+            % который можно задать вручную позже.
+            
+            if nargin == 2
+                % Автоматический расчет (как было)
+                obj.Center = [mean(x), mean(y)];
+                r_vals = sqrt((x - obj.Center(1)).^2 + (y - obj.Center(2)).^2);
+                obj.ScaleFactor = mean(r_vals);
+                
+                if obj.ScaleFactor < 1e-6
+                    obj.ScaleFactor = 1;
+                end
+            end
+            % Если nargin == 0, просто возвращаем объект с дефолтными значениями
+        end
+        
+        function [xn, yn] = normalize(obj, x, y)
+            xn = (x - obj.Center(1)) / obj.ScaleFactor;
+            yn = (y - obj.Center(2)) / obj.ScaleFactor;
+        end
+        
+        function [x, y] = denormalize(obj, xn, yn)
+            x = xn * obj.ScaleFactor + obj.Center(1);
+            y = yn * obj.ScaleFactor + obj.Center(2);
+        end
+        
+        function r_phys = denormRadius(obj, r_norm)
+            r_phys = r_norm * obj.ScaleFactor;
+        end
+        
+        function dr_phys = denormDeriv2(obj, dr_norm)
+            dr_phys = dr_norm / obj.ScaleFactor;
+        end
+    end
+end
+
+function bc_link = compute_polar_slope_link(x, y, dy_dx)
+    % COMPUTE_POLAR_SLOPE_LINK Вычисляет коэффициент связи для ГУ r' = C * phi'
+    %
+    % Вход:
+    %   x, y    - координаты точки (локальные, относительно центра)
+    %   dy_dx   - декартова производная y'(x)
+    %
+    % Выход:
+    %   bc_link - структура с полями:
+    %       .type     - 'coupled' или 'radial'
+    %       .C        - коэффициент связи (r' = C * phi')
+    %       .norm_r   - оценка r'(u) при условии |v|=1 (для справки)
+    %       .norm_phi - оценка phi'(u) при условии |v|=1 (для справки)
+
+    r = sqrt(x^2 + y^2);
+    
+    if isnan(dy_dx)
+        bc_link.type = 'free';
+        bc_link.C = NaN;
+        return;
+    end
+    
+    % 1. Формируем единичный касательный вектор T из y'(x)
+    denom = sqrt(1 + dy_dx^2);
+    tx = 1 / denom;
+    ty = dy_dx / denom;
+    
+    % 2. Вычисляем производные по u (в предположении u=s, просто для получения пропорции)
+    % r'(u) = (x*tx + y*ty)/r
+    % phi'(u) = (x*ty - y*tx)/r^2
+    
+    % Защита от r=0
+    if r < 1e-9
+        bc_link.type = 'singular_center';
+        bc_link.C = NaN;
+        return;
+    end
+    
+    phi_prime_u = (x*ty - y*tx) / r^2;
+    
+    % 3. Проверка на радиальный случай (касательная проходит через центр)
+    % В этом случае phi'(u) = 0, значит знаменатель обнуляется.
+    if abs(phi_prime_u) < 1e-9
+        bc_link.type = 'radial_tangent';
+        % В этом случае условие связи r' = C*phi' невозможно (C = inf).
+        % Вместо этого мы должны задать жесткое условие: phi'(u) = 0.
+        bc_link.C = Inf; 
+        bc_link.fixed_phi_prime = 0;
+        
+        % r'(u) в этом случае просто проекция T на радиус
+        bc_link.norm_r = tx*(x/r) + ty*(y/r); % = dot(T, e_r)
+    else
+        bc_link.type = 'coupled';
+        % Вычисляем r'(u) для числителя
+        r_prime_u = (x*tx + y*ty) / r;
+        
+        % Вычисляем коэффициент C = r'(phi)
+        bc_link.C = r_prime_u / phi_prime_u;
+        
+        % Сохраняем нормированные значения на всякий случай
+        bc_link.norm_r = r_prime_u;
+        bc_link.norm_phi = phi_prime_u;
+    end
+end
+
+function bc_polar = convert_cartesian_bc_to_polar(x, y, dy_dx, d2y_dx2)
+    % Конвертация ГУ с учетом второй производной (кривизны).
+    % Если d2y_dx2 задано (не NaN), вычисляем фиксированные r'' и phi''.
+    
+    r_val = sqrt(x^2 + y^2);
+    bc_polar.r = struct('value', r_val);
+    bc_polar.phi = struct('value', atan2(y, x));
+    
+    % --- Первые производные ---
+    if isnan(dy_dx)
+        bc_polar.r.deriv1 = NaN;
+        bc_polar.phi.deriv1 = NaN;
+        % Если нет первой производной, вторую считать нельзя
+        bc_polar.r.deriv2 = NaN;
+        bc_polar.phi.deriv2 = NaN;
+        return;
+    end
+    
+    % 1. Касательный вектор и скорость
+    denom = sqrt(1 + dy_dx^2);
+    tx = 1 / denom;
+    ty = dy_dx / denom;
+    
+    x_dot = tx;
+    y_dot = ty;
+    
+    dr_du = (x * x_dot + y * y_dot) / r_val;
+    dphi_du = (x * y_dot - y * x_dot) / r_val^2;
+    
+    bc_polar.r.deriv1 = dr_du;
+    bc_polar.phi.deriv1 = dphi_du;
+    
+    % --- Вторые производные ---
+    if isnan(d2y_dx2)
+        bc_polar.r.deriv2 = NaN;
+        bc_polar.phi.deriv2 = NaN;
+    else
+        % 2. Кривизна
+        kappa = d2y_dx2 / (denom^3);
+        
+        % 3. Вектор ускорения (a = kappa * n)
+        % Нормаль n = (-ty, tx)
+        x_ddot = -kappa * ty;
+        y_ddot =  kappa * tx;
+        
+        % 4. Переход к полярным ускорениям
+        % r'' = (x*x'' + y*y'' + x'^2 + y'^2 - r'^2) / r
+        % x'^2 + y'^2 = 1 (при u=s)
+        d2r_du2 = (x * x_ddot + y * y_ddot + 1 - dr_du^2) / r_val;
+        
+        % phi'' = (x*y'' - y*x'' - 2*r*r'*phi') / r^2
+        d2phi_du2 = (x * y_ddot - y * x_ddot - 2 * r_val * dr_du * dphi_du) / r_val^2;
+        
+        bc_polar.r.deriv2 = d2r_du2;
+        bc_polar.phi.deriv2 = d2phi_du2;
+    end
+end
+
+%% CLIENT SCRIPT: Normalized Polar Spline Architecture
+% Полный цикл: Нормализация -> Оптимизация -> Денормализация
+clear; close all; clc;
+
+%% 1. Загрузка данных
+filename = 'data.txt';
+if ~exist(filename, 'file')
+    error('Файл data.txt не найден!');
+end
+M = readmatrix(filename);
+x_glob = M(:, 1);
+y_glob = M(:, 2);
+
+%% 2. Геометрическая подготовка (Center Finding)
+% Шаг 1: Находим центр аппроксимирующей окружности
+A_mat = [2*x_glob, 2*y_glob, ones(length(x_glob), 1)];
+b_vec = x_glob.^2 + y_glob.^2;
+p_fit = A_mat \ b_vec;
+x_center = p_fit(1);
+y_center = p_fit(2);
+R_est = sqrt(p_fit(3) + x_center^2 + y_center^2);
+
+fprintf('Геометрический центр: (%.3f, %.3f), Радиус: %.3f\n', x_center, y_center, R_est);
+
+%% 3. Нормализация данных
+% Создаем нормализатор, используя найденный центр как начало координат
+% Масштаб выберем как средний радиус (или R_est)
+norm_unit = Services.Normalizer();
+norm_unit.Center = [x_center, y_center]; % Центр жестко задаем
+norm_unit.ScaleFactor = R_est;           % Масштабируем по радиусу
+
+% Переход к безразмерным координатам
+[x_norm, y_norm] = norm_unit.normalize(x_glob, y_glob);
+
+fprintf('Данные нормализованы. Масштаб L = %.3f\n', norm_unit.ScaleFactor);
+
+%% 4. Подготовка Граничных Условий (в нормализованной системе)
+% Условия задачи: Начало - Natural, Конец - y'=0, y''=0 (прямая)
+
+% --- START (Естественные условия) ---
+% В нормализованных координатах просто фиксируем точку, производные свободны (NaN)
+bc_start.r = struct('value', sqrt(x_norm(1)^2 + y_norm(1)^2));
+bc_start.phi = struct('value', atan2(y_norm(1), x_norm(1)));
+% deriv1, deriv2 не указаны -> автоматически NaN -> Free
+
+% --- END (Жесткие условия) ---
+% Дано: y'(x) = 0, y''(x) = 0.
+% Важно: y'' нужно масштабировать! y''_norm = y''_phys * L.
+k_end = 0;      % y'(x)
+q_end = 0;      % y''(x) физическая
+q_norm = q_end * norm_unit.ScaleFactor; % Масштабируем кривизну
+
+x_e = x_norm(end); 
+y_e = y_norm(end);
+
+% Вычисляем связь для первых производных
+link_end = compute_polar_slope_link(x_e, y_e, k_end);
+C_end = link_end.C;
+
+% Вычисляем значения вторых производных (для v=1)
+bc_calc = convert_cartesian_bc_to_polar(x_e, y_e, k_end, q_norm);
+
+% Сборка структуры bc_end для решателя
+bc_end.r.value   = sqrt(x_e^2 + y_e^2);
+bc_end.r.deriv1  = struct('coupling', C_end);   % Связь (геометрия)
+% bc_end.r.deriv2  = bc_calc.r.deriv2;            % Фиксация (кривизна)
+bc_end.r.deriv2  = NaN;            % Фиксация (кривизна)
+
+bc_end.phi.value = atan2(y_e, x_e);
+bc_end.phi.deriv1 = NaN;                        % Свободная (скорость)
+% bc_end.phi.deriv2 = bc_calc.phi.deriv2;         % Фиксация (кривизна)
+bc_end.phi.deriv2 = NaN;         % Фиксация (кривизна)
+% Добавляем спец-условие на y''
+bc_end.y_deriv2 = struct('target', 0, 'weight', 1e-3);
+%% 5. Запуск Оптимизации (в нормализованном пространстве)
+alpha = 0.95; 
+beta=1e-2;
+gamma=1e-3;
+spline = Splines.PolarSmoothingSplineCoupledNew(x_norm, y_norm);
+spline.setBC(bc_start, bc_end); 
+
+fprintf('Запуск оптимизации в нормализованном пространстве...\n');
+spline.fit(alpha,beta,gamma);
+
+%% 6. Извлечение и Денормализация результатов
+u_dense = linspace(spline.u(1), spline.u(end), 200)';
+n = spline.n;
+
+% Извлекаем результаты оптимизации (они безразмерные)
+r_res = spline.results.r;
+phi_res = spline.results.phi;
+
+geom = spline.geom_r;
+
+% Массивы для безразмерных величин
+r_vals_n = zeros(size(u_dense)); phi_vals_n = zeros(size(u_dense));
+r1_vals_n = zeros(size(u_dense)); phi1_vals_n = zeros(size(u_dense));
+r2_vals_n = zeros(size(u_dense)); phi2_vals_n = zeros(size(u_dense));
+
+% Цикл расчета (как раньше)
+for k = 1:length(u_dense)
+    u = u_dense(k);
+    idx = find(spline.u <= u, 1, 'last');
+    if idx > n-1, idx = n-1; end
+    t = u - spline.u(idx);
+    h = spline.u(idx+1) - spline.u(idx);
+    
+    cr = geom.getSegmentCoeffs(r_res.v(idx), r_res.m(idx), r_res.M(idx), ...
+                               r_res.v(idx+1), r_res.m(idx+1), r_res.M(idx+1), h);
+    r_vals_n(k) = geom.evalValue(t, r_res.v(idx), r_res.m(idx), r_res.M(idx), cr);
+    r1_vals_n(k) = geom.evalDeriv1(t, r_res.m(idx), r_res.M(idx), cr);
+    r2_vals_n(k) = geom.evalDeriv2(t, r_res.M(idx), cr);
+    
+    cp = geom.getSegmentCoeffs(phi_res.v(idx), phi_res.m(idx), phi_res.M(idx), ...
+                               phi_res.v(idx+1), phi_res.m(idx+1), phi_res.M(idx+1), h);
+    phi_vals_n(k) = geom.evalValue(t, phi_res.v(idx), phi_res.m(idx), phi_res.M(idx), cp);
+    phi1_vals_n(k) = geom.evalDeriv1(t, phi_res.m(idx), phi_res.M(idx), cp);
+    phi2_vals_n(k) = geom.evalDeriv2(t, phi_res.M(idx), cp);
+end
+
+% === ДЕНОРМАЛИЗАЦИЯ ===
+% 1. Координаты
+r_vals = norm_unit.denormRadius(r_vals_n); % r = r_norm * L
+phi_vals = phi_vals_n;                      % phi не меняется
+
+x_fit = r_vals .* cos(phi_vals) + x_center;
+y_fit = r_vals .* sin(phi_vals) + y_center;
+
+% 2. Первые производные (инвариантны, не меняются)
+r1_vals = r1_vals_n;
+phi1_vals = phi1_vals_n;
+
+% 2. Производные по U
+% r'(u) - инвариантно, совпадает
+r1_vals = r1_vals_n; 
+
+% phi'(u) ~ 1/L, значит надо делить на L (было упущено)
+phi1_vals = phi1_vals_n / norm_unit.ScaleFactor; 
+
+% r''(u) ~ 1/L, делим на L (как было)
+r2_vals = norm_unit.denormDeriv2(r2_vals_n);
+
+% phi''(u) ~ 1/L^2, делим на L^2 (было упущено)
+phi2_vals = phi2_vals_n / (norm_unit.ScaleFactor^2); 
+
+% % 3. Вторые производные (обратное масштабирование)
+% r2_vals = norm_unit.denormDeriv2(r2_vals_n);
+% phi2_vals = norm_unit.denormDeriv2(phi2_vals_n);
+
+
+% 4. Производные по phi (r' = dr/du / dphi/du -> инвариантно)
+dr_dphi = r1_vals ./ phi1_vals;
+d2r_dphi2 = (phi1_vals .* r2_vals - r1_vals .* phi2_vals) ./ (phi1_vals.^3);
+
+%% 7. Визуализация
+% Графики те же, что и в прошлой версии
+figure('Name', 'XY Curve', 'Position', [100, 500, 600, 500]);
+plot(x_glob, y_glob, 'ro', 'MarkerFaceColor', 'r', 'DisplayName', 'Данные');
+hold on;
+plot(x_fit, y_fit, 'b-', 'LineWidth', 2, 'DisplayName', 'Сплайн');
+plot(x_center, y_center, 'kx', 'MarkerSize', 10, 'LineWidth', 2, 'DisplayName', 'Центр');
+axis equal; grid on; legend;
+xlabel('X'); ylabel('Y');
+title('Кривая в декартовых координатах (Физические величины)');
+
+figure('Name', 'Derivatives by u', 'Position', [150, 400, 800, 500]);
+subplot(2, 1, 1);
+yyaxis left; plot(u_dense, r1_vals, 'b-', 'LineWidth', 1.5); ylabel('r''(u)');
+yyaxis right; plot(u_dense, phi1_vals, 'r-', 'LineWidth', 1.5); ylabel('\phi''(u)');
+grid on; title('Первые производные (безразмерные)');
+
+subplot(2, 1, 2);
+yyaxis left; plot(u_dense, r2_vals, 'b-', 'LineWidth', 1.5); ylabel('r''''(u) [1/L]');
+yyaxis right; plot(u_dense, phi2_vals, 'r-', 'LineWidth', 1.5); ylabel('\phi''''(u) [1/L]');
+grid on; title('Вторые производные (физические)');
+xlabel('Параметр u');
+
+figure('Name', 'r''(phi)', 'Position', [200, 300, 600, 500]);
+plot(phi_vals, dr_dphi, 'b-', 'LineWidth', 1.5);
+hold on; yline(0, 'k--');
+grid on; xlabel('\phi (rad)'); ylabel('dr/d\phi');
+title('Первая производная r''(\phi)');
+
+figure('Name', 'r''''(phi)', 'Position', [250, 200, 600, 500]);
+plot(phi_vals, d2r_dphi2, 'b-', 'LineWidth', 1.5);
+hold on; yline(0, 'k--');
+grid on; xlabel('\phi (rad)'); ylabel('d^2r/d\phi^2');
+title('Вторая производная r''''(\phi)');
+
+%% 8. Вычисление декартовых производных
+[dy_dx, d2y_dx2] = get_cartesian_derivatives(r_vals, phi_vals, r1_vals, phi1_vals, r2_vals, phi2_vals);
+
+% Визуализация y'(x)
+figure('Name', 'Cartesian Derivatives', 'Position', [300, 200, 800, 500]);
+subplot(2,1,1);
+plot(u_dense, dy_dx, 'b-', 'LineWidth', 1.5);
+grid on;
+title('Наклон касательной y''(x)');
+ylabel('y''(x)');
+xlabel('Параметр u');
+
+% Проверка граничных условий на конце
+fprintf('Проверка на конечной точке:\n');
+fprintf('  Задано y''(end) = 0. Получено: %.4f\n', dy_dx(end));
+fprintf('  Задано y''''(end) = 0. Получено: %.4f\n', d2y_dx2(end));
+
+subplot(2,1,2);
+plot(u_dense, d2y_dx2, 'r-', 'LineWidth', 1.5);
+grid on;
+title('Кривизна профиля y''''(x)');
+ylabel('y''''(x)');
+xlabel('Параметр u');
+
+fprintf('Построение завершено.\n');

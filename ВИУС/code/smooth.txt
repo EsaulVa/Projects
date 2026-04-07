@@ -1,0 +1,129 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.optimize import minimize
+from scipy.integrate import quad
+from scipy.interpolate import CubicSpline
+
+# Базовый класс QuinticSpline должен быть определен выше (скопирован из первого ответа)
+
+class SmoothingQuinticSpline(QuinticSpline):
+    def __init__(self, x, y_data, bc_left, bc_right):
+        super().__init__(x, y_data, bc_left, bc_right)
+        self.y_data = np.copy(y_data)
+        
+    def _objective(self, vars_opt, alpha):
+        """
+        vars_opt = [v_0...v_n, m_1...m_{n-2}, M_1...M_{n-2}]
+        Общее количество элементов: n + (n-2) + (n-2) = 3n - 4
+        """
+        n = self.n
+        
+        # 1. Распаковка значений функции (всех n узлов)
+        v = vars_opt[:n]
+        
+        # 2. Распаковка производных (только внутренних узлов, n-2 штук)
+        m_internal = vars_opt[n : n + (n-2)]
+        M_internal = vars_opt[n + (n-2) : n + 2*(n-2)]
+        
+        # 3. Сборка полных массивов
+        m = np.zeros(n)
+        M = np.zeros(n)
+        
+        # Граничные условия
+        m[0] = self.bc_left['m']
+        M[0] = self.bc_left['M']
+        m[-1] = self.bc_right['m']
+        M[-1] = self.bc_right['M']
+        
+        # Вставка оптимизируемых значений во внутренние узлы (индексы 1 до n-2)
+        m[1:-1] = m_internal
+        M[1:-1] = M_internal
+        
+        # 4. Часть 1: Штраф за отклонение от данных
+        fidelity_term = np.sum((v - self.y_data)**2)
+        # fidelity_term = np.sum(abs(v - self.y_data))
+        
+        # 5. Часть 2: Энергия изгиба
+        smoothness_term = 0.0
+        
+        for i in range(n - 1):
+            # Используем оптимизируемые значения v
+            coeffs = self._get_segment_coeffs(i, v, m, M)
+            a3, a4, a5 = coeffs
+            h = self.x[i+1] - self.x[i]
+            
+            def second_deriv_squared(t):
+                return (M[i] + 6*a3*t + 12*a4*t**2 + 20*a5*t**3)**2
+
+            integral_val, _ = quad(second_deriv_squared, 0, h)
+            smoothness_term += integral_val
+            
+        return alpha * fidelity_term + (1 - alpha) * smoothness_term
+
+    def fit(self, alpha):
+        self.alpha = alpha
+        n = self.n
+        
+        # Начальное приближение
+        v_init = self.y_data
+        cs = CubicSpline(self.x, self.y_data, bc_type=((1, self.bc_left['m']), (1, self.bc_right['m'])))
+        m_init = cs(self.x, 1)
+        M_init = cs(self.x, 2)
+        
+        # Формируем начальный вектор оптимизации
+        # Срез [1:-1] автоматически имеет размер n-2
+        m_opt_vars = m_init[1:-1]
+        M_opt_vars = M_init[1:-1]
+        
+        x0 = np.concatenate([v_init, m_opt_vars, M_opt_vars])
+        
+        print(f"Оптимизация сглаживающего сплайна (alpha={alpha})...")
+        print(f"Размер вектора переменных: {len(x0)} (Ожидается {n + 2*(n-2)})")
+        
+        res = minimize(self._objective, x0, args=(alpha,), method='L-BFGS-B')
+        print(f"Готово. {res.message}")
+        
+        # Восстановление результатов
+        self.v = res.x[:n]
+        
+        self.m[0] = self.bc_left['m']; self.m[-1] = self.bc_right['m']
+        self.M[0] = self.bc_left['M']; self.M[-1] = self.bc_right['M']
+        
+        # Распаковка производных из результата (также срезы по n-2)
+        self.m[1:-1] = res.x[n : n + (n-2)]
+        self.M[1:-1] = res.x[n + (n-2) : n + 2*(n-2)]
+        
+        # Пересчет коэффициентов сегментов
+        self.segments_coeffs = []
+        for i in range(n - 1):
+            self.segments_coeffs.append(self._get_segment_coeffs(i, self.v, self.m, self.M))
+
+    def predict(self, x_eval, der=0):
+        x_eval = np.atleast_1d(x_eval)
+        result = np.zeros_like(x_eval)
+        
+        for k, xv in enumerate(x_eval):
+            if xv < self.x[0] or xv > self.x[-1]:
+                result[k] = np.nan
+                continue
+                
+            idx = np.searchsorted(self.x, xv) - 1
+            if idx < 0: idx = 0
+            if idx >= self.n - 1: idx = self.n - 2
+            
+            t = xv - self.x[idx]
+            # Используем self.v (оптимизированные значения в узлах)
+            vi = self.v[idx]
+            mi = self.m[idx]
+            Mi = self.M[idx]
+            a3, a4, a5 = self.segments_coeffs[idx]
+            
+            if der == 0:
+                val = vi + mi*t + (Mi/2.0)*t**2 + a3*t**3 + a4*t**4 + a5*t**5
+            elif der == 1:
+                val = mi + Mi*t + 3*a3*t**2 + 4*a4*t**3 + 5*a5*t**4
+            elif der == 2:
+                val = Mi + 6*a3*t + 12*a4*t**2 + 20*a5*t**3
+            result[k] = val
+            
+        return result

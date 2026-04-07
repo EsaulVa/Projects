@@ -1,0 +1,37 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.optimize import minimize
+from scipy.integrate import quad
+from scipy.interpolate import CubicSpline
+
+# Базовый класс (можно скопировать или импортировать, если в одном файле)
+class QuinticSpline:
+    def __init__(self, x, y, bc_left, bc_right):
+        self.x = np.asarray(x)
+        self.y = np.asarray(y) # Здесь y - это интерполируемые значения
+        self.n = len(x)
+        self.bc_left = bc_left
+        self.bc_right = bc_right
+        self.m = np.zeros(self.n)
+        self.M = np.zeros(self.n)
+        self.segments_coeffs = []
+
+    def _get_segment_coeffs(self, i, y_all, m_all, M_all):
+        """Вычисляет коэффициенты a3, a4, a5 для отрезка, используя значения y_all[i], y_all[i+1]"""
+        h = self.x[i+1] - self.x[i]
+        yi, yip1 = y_all[i], y_all[i+1]
+        mi, mip1 = m_all[i], m_all[i+1]
+        Mi, Mip1 = M_all[i], M_all[i+1]
+        
+        B1 = yip1 - (yi + mi*h + 0.5*Mi*h**2)
+        B2 = mip1 - (mi + Mi*h)
+        B3 = Mip1 - Mi
+        
+        A = np.array([
+            [h**3, h**4, h**5],
+            [3*h**2, 4*h**3, 5*h**4],
+            [6*h, 12*h**2, 20*h**3]
+        ])
+        B = np.array([B1, B2, B3])
+        coeffs = np.linalg.solve(A, B)
+        return coeffs 

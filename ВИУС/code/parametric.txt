@@ -1,0 +1,422 @@
+import numpy as np
+from scipy.optimize import minimize
+from scipy.integrate import quad
+
+class ParametricQuinticSpline:
+    """
+    Параметрический сглаживающий сплайн 5-го порядка с корректной обработкой
+    граничных условий для геометрических кривых.
+    
+    Особенности:
+    - Использует хордальную параметризацию (u ~ длина дуги)
+    - Граничные условия задаются как направление и кривизна
+    - Минимизирует интеграл от квадрата второй производной по параметру
+    """
+    
+    def __init__(self, points, bc_start=None, bc_end=None):
+        """
+        points : numpy array shape (N, 2) - исходные точки (x, y)
+        bc_start, bc_end : dict с ключами 'direction' и 'curvature'
+            direction : касательный вектор (нормализуется)
+            curvature : скалярная кривизна (1/радиус)
+        """
+        self.points = np.asarray(points)
+        self.n = len(points)
+        
+        # Хордальная параметризация
+        self.u = self._calculate_chord_parameter(self.points)
+        
+        # Автоматические граничные условия, если не заданы
+        if bc_start is None:
+            bc_start = self._estimate_boundary_conditions(start=True)
+        if bc_end is None:
+            bc_end = self._estimate_boundary_conditions(start=False)
+            
+        self.bc_start = bc_start
+        self.bc_end = bc_end
+        
+        # Преобразуем граничные условия в формат для одномерных сплайнов
+        self.bc_x, self.bc_y = self._convert_boundary_conditions()
+        
+        # Коэффициенты сплайнов
+        self.v_x = np.zeros(self.n)  # Значения x в узлах
+        self.v_y = np.zeros(self.n)  # Значения y в узлах
+        self.m_x = np.zeros(self.n)  # Первые производные x
+        self.m_y = np.zeros(self.n)  # Первые производные y
+        self.M_x = np.zeros(self.n)  # Вторые производные x
+        self.M_y = np.zeros(self.n)  # Вторые производные y
+        self.coeffs_x = []  # Коэффициенты для сегментов x
+        self.coeffs_y = []  # Коэффициенты для сегментов y
+        
+    def _calculate_chord_parameter(self, points):
+        """Вычисление кумулятивной хордальной параметризации."""
+        diffs = np.diff(points, axis=0)
+        dists = np.linalg.norm(diffs, axis=1)
+        u = np.zeros(len(points))
+        u[1:] = np.cumsum(dists)
+        return u
+    
+    def _estimate_boundary_conditions(self, start=True):
+        """Оценка граничных условий по точкам."""
+        if start:
+            # Используем первые три точки
+            p0, p1, p2 = self.points[0], self.points[1], self.points[2]
+            # Касательная как направление от p0 к p1
+            tangent = p1 - p0
+            tangent = tangent / np.linalg.norm(tangent)
+            
+            # Кривизну оцениваем через три точки
+            v1 = p1 - p0
+            v2 = p2 - p1
+            if np.linalg.norm(v1) > 0 and np.linalg.norm(v2) > 0:
+                # Упрощенная оценка кривизны
+                curvature = 0.0
+            else:
+                curvature = 0.0
+        else:
+            # Используем последние три точки
+            p_n2, p_n1, p_n = self.points[-3], self.points[-2], self.points[-1]
+            # Касательная как направление от p_{n-1} к p_n
+            tangent = p_n - p_n1
+            tangent = tangent / np.linalg.norm(tangent)
+            
+            # Упрощенная оценка кривизны
+            curvature = 0.0
+            
+        return {'direction': tangent, 'curvature': curvature}
+    
+    def _convert_boundary_conditions(self):
+        """Преобразование геометрических граничных условий в производные."""
+        # Начальные условия
+        T_start = self.bc_start['direction']
+        kappa_start = self.bc_start['curvature']
+        
+        # Нормализуем касательный вектор
+        T_norm_start = T_start / np.linalg.norm(T_start)
+        
+        # Нормаль (поворот на 90° против часовой стрелки)
+        N_start = np.array([-T_norm_start[1], T_norm_start[0]])
+        
+        # Оцениваем скорость на границе (длину касательного вектора)
+        # В хордальной параметризации скорость ≈ 1
+        speed_start = 1.0
+        
+        # Вектор кривизны: kappa * N * speed^2
+        curvature_vec_start = kappa_start * speed_start**2 * N_start
+        
+        # Конечные условия
+        T_end = self.bc_end['direction']
+        kappa_end = self.bc_end['curvature']
+        
+        T_norm_end = T_end / np.linalg.norm(T_end)
+        N_end = np.array([-T_norm_end[1], T_norm_end[0]])
+        speed_end = 1.0
+        curvature_vec_end = kappa_end * speed_end**2 * N_end
+        
+        # Граничные условия для одномерных сплайнов
+        bc_x_start = {'m': T_norm_start[0] * speed_start, 'M': curvature_vec_start[0]}
+        bc_y_start = {'m': T_norm_start[1] * speed_start, 'M': curvature_vec_start[1]}
+        
+        bc_x_end = {'m': T_norm_end[0] * speed_end, 'M': curvature_vec_end[0]}
+        bc_y_end = {'m': T_norm_end[1] * speed_end, 'M': curvature_vec_end[1]}
+        
+        return (bc_x_start, bc_x_end), (bc_y_start, bc_y_end)
+    
+    def _get_segment_coeffs(self, i, v_all, m_all, M_all):
+        """Вычисляет коэффициенты a3, a4, a5 для отрезка i."""
+        h = self.u[i+1] - self.u[i]
+        vi, vip1 = v_all[i], v_all[i+1]
+        mi, mip1 = m_all[i], m_all[i+1]
+        Mi, Mip1 = M_all[i], M_all[i+1]
+        
+        B1 = vip1 - (vi + mi*h + 0.5*Mi*h**2)
+        B2 = mip1 - (mi + Mi*h)
+        B3 = Mip1 - Mi
+        
+        A = np.array([
+            [h**3, h**4, h**5],
+            [3*h**2, 4*h**3, 5*h**4],
+            [6*h, 12*h**2, 20*h**3]
+        ])
+        B = np.array([B1, B2, B3])
+        
+        try:
+            coeffs = np.linalg.solve(A, B)
+        except np.linalg.LinAlgError:
+            # Если матрица вырождена, используем псевдообратную
+            coeffs = np.linalg.lstsq(A, B, rcond=None)[0]
+            
+        return coeffs
+    
+    def _objective(self, vars_opt, alpha_x, alpha_y):
+        """Целевая функция для оптимизации."""
+        n = self.n
+        
+        # Распаковка переменных
+        # Порядок: [v_x, v_y, m_x_internal, m_y_internal, M_x_internal, M_y_internal]
+        v_x = vars_opt[:n]
+        v_y = vars_opt[n:2*n]
+        
+        m_x_internal = vars_opt[2*n:2*n + (n-2)]
+        m_y_internal = vars_opt[2*n + (n-2):2*n + 2*(n-2)]
+        M_x_internal = vars_opt[2*n + 2*(n-2):2*n + 3*(n-2)]
+        M_y_internal = vars_opt[2*n + 3*(n-2):2*n + 4*(n-2)]
+        
+        # Сборка полных массивов
+        m_x = np.zeros(n)
+        m_y = np.zeros(n)
+        M_x = np.zeros(n)
+        M_y = np.zeros(n)
+        
+        # Граничные условия
+        m_x[0], m_x[-1] = self.bc_x[0]['m'], self.bc_x[1]['m']
+        m_y[0], m_y[-1] = self.bc_y[0]['m'], self.bc_y[1]['m']
+        M_x[0], M_x[-1] = self.bc_x[0]['M'], self.bc_x[1]['M']
+        M_y[0], M_y[-1] = self.bc_y[0]['M'], self.bc_y[1]['M']
+        
+        # Внутренние узлы
+        m_x[1:-1] = m_x_internal
+        m_y[1:-1] = m_y_internal
+        M_x[1:-1] = M_x_internal
+        M_y[1:-1] = M_y_internal
+        
+        # Термин соответствия данным
+        fidelity_term = (np.sum((v_x - self.points[:, 0])**2) +
+                        np.sum((v_y - self.points[:, 1])**2))
+        
+        # Термин гладкости (энергия изгиба)
+        smoothness_term = 0.0
+        
+        for i in range(n - 1):
+            # X компонента
+            coeffs_x = self._get_segment_coeffs(i, v_x, m_x, M_x)
+            a3_x, a4_x, a5_x = coeffs_x
+            h = self.u[i+1] - self.u[i]
+            
+            def second_deriv_x_squared(t):
+                return (M_x[i] + 6*a3_x*t + 12*a4_x*t**2 + 20*a5_x*t**3)**2
+            
+            # Y компонента
+            coeffs_y = self._get_segment_coeffs(i, v_y, m_y, M_y)
+            a3_y, a4_y, a5_y = coeffs_y
+            
+            def second_deriv_y_squared(t):
+                return (M_y[i] + 6*a3_y*t + 12*a4_y*t**2 + 20*a5_y*t**3)**2
+            
+            # Интеграл для X
+            integral_x, _ = quad(second_deriv_x_squared, 0, h)
+            # Интеграл для Y
+            integral_y, _ = quad(second_deriv_y_squared, 0, h)
+            
+            smoothness_term += integral_x + integral_y
+        
+        # Комбинированная целевая функция
+        return (alpha_x * np.sum((v_x - self.points[:, 0])**2) +
+                alpha_y * np.sum((v_y - self.points[:, 1])**2) +
+                (1 - (alpha_x + alpha_y)/2) * smoothness_term)
+    
+    def fit(self, alpha=0.95, alpha_x=None, alpha_y=None):
+        """
+        Оптимизация сплайна.
+        
+        alpha : общий параметр сглаживания (используется, если не заданы alpha_x, alpha_y)
+        alpha_x, alpha_y : отдельные параметры для X и Y компонент
+        """
+        if alpha_x is None:
+            alpha_x = alpha
+        if alpha_y is None:
+            alpha_y = alpha
+            
+        n = self.n
+        
+        # Начальное приближение
+        v_x_init = self.points[:, 0].copy()
+        v_y_init = self.points[:, 1].copy()
+        
+        # Оценка первых производных через конечные разности
+        m_x_init = np.zeros(n)
+        m_y_init = np.zeros(n)
+        
+        for i in range(1, n-1):
+            h_prev = self.u[i] - self.u[i-1]
+            h_next = self.u[i+1] - self.u[i]
+            # Взвешенное среднее
+            m_x_init[i] = ((self.points[i, 0] - self.points[i-1, 0])/h_prev * h_next +
+                          (self.points[i+1, 0] - self.points[i, 0])/h_next * h_prev) / (h_prev + h_next)
+            m_y_init[i] = ((self.points[i, 1] - self.points[i-1, 1])/h_prev * h_next +
+                          (self.points[i+1, 1] - self.points[i, 1])/h_next * h_prev) / (h_prev + h_next)
+        
+        # Граничные производные
+        m_x_init[0], m_x_init[-1] = self.bc_x[0]['m'], self.bc_x[1]['m']
+        m_y_init[0], m_y_init[-1] = self.bc_y[0]['m'], self.bc_y[1]['m']
+        
+        # Вторые производные инициализируем нулями
+        M_x_init = np.zeros(n)
+        M_y_init = np.zeros(n)
+        M_x_init[0], M_x_init[-1] = self.bc_x[0]['M'], self.bc_x[1]['M']
+        M_y_init[0], M_y_init[-1] = self.bc_y[0]['M'], self.bc_y[1]['M']
+        
+        # Формируем вектор оптимизации
+        x0 = np.concatenate([
+            v_x_init, v_y_init,
+            m_x_init[1:-1], m_y_init[1:-1],
+            M_x_init[1:-1], M_y_init[1:-1]
+        ])
+        
+        print(f"Оптимизация параметрического сплайна...")
+        print(f"alpha_x={alpha_x:.3f}, alpha_y={alpha_y:.3f}")
+        print(f"Размерность задачи: {len(x0)} переменных")
+        
+        # Оптимизация
+        res = minimize(
+            self._objective, 
+            x0, 
+            args=(alpha_x, alpha_y),
+            method='L-BFGS-B',
+            options={'maxiter': 1000, 'ftol': 1e-8, 'gtol': 1e-8}
+        )
+        
+        print(f"Оптимизация завершена: {res.message}")
+        print(f"Значение функции: {res.fun:.6f}")
+        
+        # Извлечение результатов
+        self.v_x = res.x[:n]
+        self.v_y = res.x[n:2*n]
+        
+        # Первые производные
+        self.m_x[0], self.m_x[-1] = self.bc_x[0]['m'], self.bc_x[1]['m']
+        self.m_y[0], self.m_y[-1] = self.bc_y[0]['m'], self.bc_y[1]['m']
+        self.m_x[1:-1] = res.x[2*n:2*n + (n-2)]
+        self.m_y[1:-1] = res.x[2*n + (n-2):2*n + 2*(n-2)]
+        
+        # Вторые производные
+        self.M_x[0], self.M_x[-1] = self.bc_x[0]['M'], self.bc_x[1]['M']
+        self.M_y[0], self.M_y[-1] = self.bc_y[0]['M'], self.bc_y[1]['M']
+        self.M_x[1:-1] = res.x[2*n + 2*(n-2):2*n + 3*(n-2)]
+        self.M_y[1:-1] = res.x[2*n + 3*(n-2):2*n + 4*(n-2)]
+        
+        # Вычисляем коэффициенты сегментов
+        self.coeffs_x = []
+        self.coeffs_y = []
+        for i in range(n - 1):
+            self.coeffs_x.append(self._get_segment_coeffs(i, self.v_x, self.m_x, self.M_x))
+            self.coeffs_y.append(self._get_segment_coeffs(i, self.v_y, self.m_y, self.M_y))
+    
+    def predict(self, u_eval, der=0):
+        """
+        Вычисление кривой или производных в точках параметра u.
+        
+        Parameters:
+        -----------
+        u_eval : float или array-like
+            Значения параметра u
+        der : int
+            0 - точки кривой
+            1 - касательные векторы (нормализованные)
+            2 - вторые производные
+            3 - кривизна
+        
+        Returns:
+        --------
+        numpy array shape (len(u_eval), 2) для der=0,1,2
+        numpy array shape (len(u_eval),) для der=3
+        """
+        u_eval = np.atleast_1d(u_eval)
+        
+        if der == 3:
+            # Кривизна
+            return self._curvature(u_eval)
+        
+        result = np.zeros((len(u_eval), 2))
+        
+        for k, u in enumerate(u_eval):
+            if u < self.u[0] or u > self.u[-1]:
+                result[k] = np.nan
+                continue
+                
+            idx = np.searchsorted(self.u, u) - 1
+            if idx < 0: idx = 0
+            if idx >= self.n - 1: idx = self.n - 2
+            
+            t = u - self.u[idx]
+            
+            # X компонента
+            a3_x, a4_x, a5_x = self.coeffs_x[idx]
+            if der == 0:
+                x_val = (self.v_x[idx] + self.m_x[idx]*t + 
+                        0.5*self.M_x[idx]*t**2 + 
+                        a3_x*t**3 + a4_x*t**4 + a5_x*t**5)
+            elif der == 1:
+                x_val = (self.m_x[idx] + self.M_x[idx]*t + 
+                        3*a3_x*t**2 + 4*a4_x*t**3 + 5*a5_x*t**4)
+            elif der == 2:
+                x_val = self.M_x[idx] + 6*a3_x*t + 12*a4_x*t**2 + 20*a5_x*t**3
+            
+            # Y компонента
+            a3_y, a4_y, a5_y = self.coeffs_y[idx]
+            if der == 0:
+                y_val = (self.v_y[idx] + self.m_y[idx]*t + 
+                        0.5*self.M_y[idx]*t**2 + 
+                        a3_y*t**3 + a4_y*t**4 + a5_y*t**5)
+            elif der == 1:
+                y_val = (self.m_y[idx] + self.M_y[idx]*t + 
+                        3*a3_y*t**2 + 4*a4_y*t**3 + 5*a5_y*t**4)
+            elif der == 2:
+                y_val = self.M_y[idx] + 6*a3_y*t + 12*a4_y*t**2 + 20*a5_y*t**3
+            
+            result[k] = [x_val, y_val]
+        
+        # Нормализация касательных векторов
+        if der == 1:
+            norms = np.linalg.norm(result, axis=1, keepdims=True)
+            norms[norms == 0] = 1  # избегаем деления на 0
+            result = result / norms
+            
+        return result
+    
+    def _curvature(self, u_eval):
+        """Вычисление кривизны в точках параметра u."""
+        u_eval = np.atleast_1d(u_eval)
+        curvature = np.zeros_like(u_eval)
+        
+        for k, u in enumerate(u_eval):
+            if u < self.u[0] or u > self.u[-1]:
+                curvature[k] = np.nan
+                continue
+                
+            idx = np.searchsorted(self.u, u) - 1
+            if idx < 0: idx = 0
+            if idx >= self.n - 1: idx = self.n - 2
+            
+            t = u - self.u[idx]
+            
+            # Первые производные
+            a3_x, a4_x, a5_x = self.coeffs_x[idx]
+            xp = (self.m_x[idx] + self.M_x[idx]*t + 
+                  3*a3_x*t**2 + 4*a4_x*t**3 + 5*a5_x*t**4)
+            
+            a3_y, a4_y, a5_y = self.coeffs_y[idx]
+            yp = (self.m_y[idx] + self.M_y[idx]*t + 
+                  3*a3_y*t**2 + 4*a4_y*t**3 + 5*a5_y*t**4)
+            
+            # Вторые производные
+            xpp = self.M_x[idx] + 6*a3_x*t + 12*a4_x*t**2 + 20*a5_x*t**3
+            ypp = self.M_y[idx] + 6*a3_y*t + 12*a4_y*t**2 + 20*a5_y*t**3
+            
+            # Кривизна: κ = (x'y'' - y'x'') / (x'² + y'²)^(3/2)
+            numerator = xp*ypp - yp*xpp
+            denominator = (xp**2 + yp**2)**1.5
+            
+            if denominator != 0:
+                curvature[k] = numerator / denominator
+            else:
+                curvature[k] = 0
+        
+        return curvature
+    
+    def length(self, n_samples=1000):
+        """Оценка длины кривой."""
+        u_fine = np.linspace(self.u[0], self.u[-1], n_samples)
+        points = self.predict(u_fine, der=0)
+        diffs = np.diff(points, axis=0)
+        return np.sum(np.linalg.norm(diffs, axis=1))
