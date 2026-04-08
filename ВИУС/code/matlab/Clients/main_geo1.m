@@ -97,14 +97,14 @@ u_end   = spline.u(end);         % Конец правого полюса
 alpha_0 = deg2rad(45);           % Угол намотки 45 градусов
 
 % Целевой угол: делаем 2.5 оборота, чтобы получилась красивая спираль
-v_target = 2*pi*0.1;         
-
+v_target = 2*pi;         
+% disp u_start  u_end alpha_0 v_target
 fprintf('Расчет геодезической траектории...\n');
 % Запускаем решатель. Допуск 1e-2 гарантирует точное попадание в конец баллона
 % path = solver.solve(u_start, 0, alpha_0, u_end, v_target, 0.01);
 % Передаем u_end только как границу безопасности или для справки
 % Но в eventsFunction лучше явно прописать u_end
-path = solver.solve(u_start, 0, alpha_0, u_end, v_target, 0.01);
+path = solver.solve(u_start, 0, alpha_0, u_end, v_target, 1e-2);
 fprintf('Траектория рассчитана. Длина пути: %.2f м\n', path.s(end));
 
 %% 5. Визуализация результатов

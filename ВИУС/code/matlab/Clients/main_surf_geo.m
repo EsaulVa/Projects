@@ -50,10 +50,10 @@ path = solver.solve(u_start, v_start, alpha_start, u_end, v_end, 0.05);
 figure('Name', 'Траектория намотки', 'Color', 'w');
 % 2. Подготовка сетки параметров для 3D графика
 % u - параметр вдоль образующей (берем весь диапазон сплайна)
-u_eval = linspace(spline.u(1), spline.u(end), 50); 
+u_eval = linspace(spline.u(1), spline.u(end), 30); 
 
 % v - угол поворота вокруг оси Z (полный оборот)
-v_eval = linspace(0, 2*pi, 60); 
+v_eval = linspace(0, 2*pi, 20); 
 
 % Создаем матрицы сетки
 [U, V] = meshgrid(u_eval, v_eval);

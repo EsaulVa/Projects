@@ -1,0 +1,1085 @@
+classdef SurfaceRevolutionMapper < handle
+    %SURFACEREVOLUTIONMAPPER Модуль конвертации параметрической образующей в поверхность вращения
+    %   Работает с объектом ParametricQuinticSpline, который задает профиль в плоскости ZR.
+    %   Предполагается, что x-координата кривой -> Z (ось изделия), y-координата -> R (радиус).
+    
+    properties (Access = private)
+        generatrix % Объект класса ParametricQuinticSpline (образующая в плоскости)
+    end
+    
+    methods
+        function obj = SurfaceRevolutionMapper(generatrix)
+            %SURFACEREVOLUTIONMAPPER Конструктор
+            %   generatrix: Объект ParametricQuinticSpline, описывающий профиль (Z vs R)
+            
+            if nargin < 1
+                error('Необходимо передать объект ParametricQuinticSpline.');
+            end
+            
+            obj.generatrix = generatrix;
+        end
+        
+        %% --- Основная геометрия ---
+        
+        function [X, Y, Z] = getPosition(obj, u, v)
+            %GETPOSITION Вычисляет декартовы координаты точки на поверхности
+
+            % Сохраняем исходный размер сетки (например, 60x50)
+            originalSize = size(u);
+
+            % Получаем данные из сплайна (predict вернет вектор-столбец)
+            curveData = obj.generatrix.predict(u, 0);
+
+            % Извлекаем координаты (пока это векторы)
+            Z_vec = curveData(:, 1);
+            R_vec = curveData(:, 2);
+
+            % !!! Ключевой момент: преобразуем векторы обратно в матрицы сетки !!!
+            Z_vals = reshape(Z_vec, originalSize);
+            R_vals = reshape(R_vec, originalSize);
+
+            % Вычисляем X и Y (теперь это матричные операции, которые работают корректно)
+            X = R_vals .* cos(v);
+            Y = R_vals .* sin(v);
+
+            % Z уже матрица
+            Z = Z_vals;
+        end
+        function splineObj = getSpline(obj)
+            %GETSPLINE Возвращает объект параметрического сплайна образующей
+            splineObj = obj.generatrix;
+        end
+        function [ru, rv] = getFirstDerivatives(obj, u, v)
+            %GETFIRSTDERIVATIVES Вычисляет касательные вектора r_u и r_v
+            %   Возвращает векторы размера 3xN (где N - число точек)
+            
+            % Первые производные кривой (dZ/du, dR/du)
+            curveDer1 = obj.generatrix.predict(u, 1);
+            Z1 = curveDer1(:, 1);
+            R1 = curveDer1(:, 2);
+            
+            % Значения радиуса (нужны для r_v)
+            curveData = obj.generatrix.predict(u, 0);
+            R0 = curveData(:, 2);
+            
+            cos_v = cos(v);
+            sin_v = sin(v);
+            
+            % Вектор касательный к образующей (r_u)
+            % r_u = [ R' * cos(v); R' * sin(v); Z' ]
+            ru = [R1 .* cos_v; R1 .* sin_v; Z1];
+            
+            % Вектор касательный к параллели (r_v)
+            % r_v = [ -R * sin(v); R * cos(v); 0 ]
+            rv = [-R0 .* sin_v; R0 .* cos_v; zeros(size(u))];
+        end
+        
+        function [E, F, G] = getMetricCoeffs(obj, u)
+            %GETMETRICCOEFFS Вычисляет коэффициенты первой квадратичной формы
+            
+            % Получаем 1-е производные
+            curveDer1 = obj.generatrix.predict(u, 1);
+            Z1 = curveDer1(:, 1);
+            R1 = curveDer1(:, 2);
+            
+            % Получаем значения радиуса
+            curveData = obj.generatrix.predict(u, 0);
+            R0 = curveData(:, 2);
+            
+            % E = (Z')^2 + (R')^2
+            E = Z1.^2 + R1.^2;
+            
+            % G = R^2
+            G = R0.^2;
+            
+            % F = 0
+            F = zeros(size(u));
+        end
+        
+        %% --- Данные для уравнений геодезических ---
+        
+        function Gamma = getChristoffelSymbols(obj, u)
+            %GETCHRISTOFFELSYMBOLS Вычисляет символы Кристоффеля 2-го рода
+            %   Использует упрощенные формулы для поверхности вращения.
+            
+            % Получаем 1-е и 2-е производные
+            curveDer1 = obj.generatrix.predict(u, 1);
+            Z1 = curveDer1(:, 1);
+            R1 = curveDer1(:, 2);
+            
+            curveDer2 = obj.generatrix.predict(u, 2);
+            Z2 = curveDer2(:, 1);
+            R2 = curveDer2(:, 2);
+            
+            % Получаем радиус
+            curveData = obj.generatrix.predict(u, 0);
+            R0 = curveData(:, 2);
+            
+            % Коэффициенты метрики
+            E = Z1.^2 + R1.^2;
+            G = R0.^2;
+            
+            % Производные коэффициентов метрики по u
+            Et = 2 .* (Z1 .* Z2 + R1 .* R2);
+            Gt = 2 .* R0 .* R1;
+            
+            % Вычисляем символы
+            eps_val = 1e-12; 
+            E_safe = max(E, eps_val);
+            G_safe = max(G, eps_val);
+            
+            Gamma = struct();
+            
+            Gamma.uuu = Et ./ (2 .* E_safe); % Гамма^1_11 (u corresponds to t)
+            Gamma.uvv = -Gt ./ (2 .* E_safe); % Гамма^1_22
+            
+            Gamma.vuv = Gt ./ (2 .* G_safe);  % Гамма^2_12 (v corresponds to angle)
+            Gamma.vvu = Gt ./ (2 .* G_safe);  % Гамма^2_21
+        end
+    end
+end
+
+classdef SmoothingQuinticSpline < Splines.QuinticSpline
+    %SMOOTHINGQUINTICSPLINE Сглаживающий квинтический сплайн
+    
+    properties
+        y_data      % Исходные данные
+        alpha       % Параметр сглаживания
+        v           % Оптимизированные значения в узлах
+    end
+    
+    methods
+        function obj = SmoothingQuinticSpline(x, y_data, bc_left, bc_right)
+            % Конструктор
+            obj = obj@Splines.QuinticSpline(x, y_data, bc_left, bc_right);
+            obj.y_data = y_data(:);
+        end
+        
+        function J = objective(obj, vars_opt, alpha)
+            % Целевая функция для оптимизации
+            n = obj.n;
+            
+            % Распаковка переменных
+            v = vars_opt(1:n);
+            m_internal = vars_opt(n+1:n+(n-2));
+            M_internal = vars_opt(n+(n-2)+1:end);
+            
+            % Сборка полных массивов
+            m = zeros(n, 1);
+            M = zeros(n, 1);
+            
+            % Граничные условия
+            m(1) = obj.bc_left.m;
+            M(1) = obj.bc_left.M;
+            m(end) = obj.bc_right.m;
+            M(end) = obj.bc_right.M;
+            
+            % Внутренние узлы
+            m(2:end-1) = m_internal;
+            M(2:end-1) = M_internal;
+            
+            % Штраф за отклонение от данных
+            fidelity_term = sum((v - obj.y_data).^2);
+            
+            % Энергия изгиба
+            smoothness_term = 0;
+            
+            for i = 1:n-1
+                coeffs = obj.getSegmentCoeffs(i, v, m, M);
+                a3 = coeffs(1); a4 = coeffs(2); a5 = coeffs(3);
+                h = obj.x(i+1) - obj.x(i);
+                
+                % Интеграл квадрата второй производной
+                fun = @(t) (M(i) + 6*a3*t + 12*a4*t.^2 + 20*a5*t.^3).^2;
+                integral_val = integral(fun, 0, h);
+                smoothness_term = smoothness_term + integral_val;
+            end
+            
+            J = alpha * fidelity_term + (1 - alpha) * smoothness_term;
+        end
+        
+        function fit(obj, alpha)
+            % Оптимизация сплайна
+            obj.alpha = alpha;
+            n = obj.n;
+            
+            % Начальное приближение
+            v_init = obj.y_data;
+            
+            % Используем кубический сплайн для инициализации производных
+            pp = spline(obj.x, [obj.bc_left.m; obj.y_data; obj.bc_right.m]);
+            pp_der1 = fnder(pp, 1);
+            pp_der2 = fnder(pp, 2);
+            
+            m_init = ppval(pp_der1, obj.x);
+            M_init = ppval(pp_der2, obj.x);
+            
+            % Формируем вектор оптимизации
+            m_opt_vars = m_init(2:end-1);
+            M_opt_vars = M_init(2:end-1);
+            
+            x0 = [v_init; m_opt_vars; M_opt_vars];
+            
+            fprintf('Оптимизация сглаживающего сплайна (alpha=%.3f)...\n', alpha);
+            fprintf('Размер вектора переменных: %d\n', length(x0));
+            
+            % Оптимизация с помощью fminunc
+            options = optimoptions('fminunc', ...
+                'Display', 'iter', ...
+                'Algorithm', 'quasi-newton', ...
+                'MaxIterations', 1000, ...
+                'OptimalityTolerance', 1e-8);
+            
+            objFun = @(x) obj.objective(x, alpha);
+            [x_opt, ~, exitflag] = fminunc(objFun, x0, options);
+            
+            fprintf('Оптимизация завершена. Статус: %d\n', exitflag);
+            
+            % Сохраняем результаты
+            obj.v = x_opt(1:n);
+            
+            obj.m(1) = obj.bc_left.m; obj.m(end) = obj.bc_right.m;
+            obj.M(1) = obj.bc_left.M; obj.M(end) = obj.bc_right.M;
+            
+            obj.m(2:end-1) = x_opt(n+1:n+(n-2));
+            obj.M(2:end-1) = x_opt(n+(n-2)+1:end);
+            
+            % Вычисляем коэффициенты сегментов
+            obj.segments_coeffs = cell(n-1, 1);
+            for i = 1:n-1
+                obj.segments_coeffs{i} = obj.getSegmentCoeffs(i, obj.v, obj.m, obj.M);
+            end
+        end
+        
+        function result = predict(obj, x_eval, der)
+            % Вычисление сплайна или его производных
+            if nargin < 3
+                der = 0;
+            end
+            
+            x_eval = x_eval(:);
+            result = zeros(size(x_eval));
+            
+            for k = 1:length(x_eval)
+                xv = x_eval(k);
+                
+                if xv < obj.x(1) || xv > obj.x(end)
+                    result(k) = NaN;
+                    continue;
+                end
+                
+                % Находим интервал
+                idx = find(obj.x <= xv, 1, 'last');
+                if isempty(idx) || idx < 1
+                    idx = 1;
+                elseif idx > obj.n-1
+                    idx = obj.n-1;
+                end
+                
+                t = xv - obj.x(idx);
+                vi = obj.v(idx);
+                mi = obj.m(idx);
+                Mi = obj.M(idx);
+                coeffs = obj.segments_coeffs{idx};
+                a3 = coeffs(1); a4 = coeffs(2); a5 = coeffs(3);
+                
+                switch der
+                    case 0
+                        val = vi + mi*t + (Mi/2)*t^2 + a3*t^3 + a4*t^4 + a5*t^5;
+                    case 1
+                        val = mi + Mi*t + 3*a3*t^2 + 4*a4*t^3 + 5*a5*t^4;
+                    case 2
+                        val = Mi + 6*a3*t + 12*a4*t^2 + 20*a5*t^3;
+                    otherwise
+                        error('Неподдерживаемый порядок производной');
+                end
+                
+                result(k) = val;
+            end
+        end
+    end
+end
+
+
+classdef ParametricQuinticSpline < handle
+    %PARAMETRICQUINTICSPLINE Параметрический сглаживающий сплайн
+    
+    properties
+        points          % Исходные точки (N?2)
+        n               % Количество точек
+        u               % Параметр (длина хорды)
+        bc_start        % Граничные условия в начале
+        bc_end          % Граничные условия в конце
+        spline_x        % Сплайн для X координаты
+        spline_y        % Сплайн для Y координаты
+        v_x, v_y        % Оптимизированные значения в узлах
+        m_x, m_y        % Первые производные
+        M_x, M_y        % Вторые производные
+        coeffs_x, coeffs_y % Коэффициенты сегментов
+    end
+    
+    methods
+        function obj = ParametricQuinticSpline(points, bc_start, bc_end)
+            % Конструктор
+            obj.points = points;
+            obj.n = size(points, 1);
+            obj.bc_start = bc_start;
+            obj.bc_end = bc_end;
+            
+            % Хордальная параметризация
+            obj.u = obj.calculateChordParameter(points);
+            
+            % Преобразование граничных условий
+            [bc_x, bc_y] = obj.convertBoundaryConditions();
+            
+            % Создание сплайнов для X и Y
+            obj.spline_x = Splines.SmoothingQuinticSpline(obj.u, points(:, 1), ...
+                bc_x{1}, bc_x{2});
+            obj.spline_y = Splines.SmoothingQuinticSpline(obj.u, points(:, 2), ...
+                bc_y{1}, bc_y{2});
+        end
+        
+        function u = calculateChordParameter(obj, points)
+            % Вычисление кумулятивной хордальной параметризации
+            diffs = diff(points, 1);
+            dists = sqrt(sum(diffs.^2, 2));
+            u = zeros(size(points, 1), 1);
+            u(2:end) = cumsum(dists);
+        end
+        
+        function [bc_x, bc_y] = convertBoundaryConditions(obj)
+            % Преобразование геометрических граничных условий в производные
+            % Начальные условия
+            T_start = obj.bc_start.direction;
+            kappa_start = obj.bc_start.curvature;
+            
+            T_norm_start = T_start / norm(T_start);
+            N_start = [-T_norm_start(2); T_norm_start(1)];
+            speed_start = 1.0;
+            curvature_vec_start = kappa_start * speed_start^2 * N_start;
+            
+            % Конечные условия
+            T_end = obj.bc_end.direction;
+            kappa_end = obj.bc_end.curvature;
+            
+            T_norm_end = T_end / norm(T_end);
+            N_end = [-T_norm_end(2); T_norm_end(1)];
+            speed_end = 1.0;
+            curvature_vec_end = kappa_end * speed_end^2 * N_end;
+            
+            % Граничные условия для одномерных сплайнов
+            bc_x_start = struct('m', T_norm_start(1)*speed_start, ...
+                'M', curvature_vec_start(1));
+            bc_y_start = struct('m', T_norm_start(2)*speed_start, ...
+                'M', curvature_vec_start(2));
+            
+            bc_x_end = struct('m', T_norm_end(1)*speed_end, ...
+                'M', curvature_vec_end(1));
+            bc_y_end = struct('m', T_norm_end(2)*speed_end, ...
+                'M', curvature_vec_end(2));
+            
+            bc_x = {bc_x_start, bc_x_end};
+            bc_y = {bc_y_start, bc_y_end};
+        end
+        
+        function fit(obj, alpha, alpha_x, alpha_y)
+            % Оптимизация сплайна
+            if nargin < 3
+                alpha_x = alpha;
+            end
+            if nargin < 4
+                alpha_y = alpha;
+            end
+            
+            fprintf('Обучение параметрического сплайна...\n');
+            fprintf('alpha_x=%.3f, alpha_y=%.3f\n', alpha_x, alpha_y);
+            
+            % Обучение сплайнов для X и Y
+            obj.spline_x.fit(alpha_x);
+            obj.spline_y.fit(alpha_y);
+            
+            % Сохраняем результаты
+            obj.v_x = obj.spline_x.v;
+            obj.v_y = obj.spline_y.v;
+            obj.m_x = obj.spline_x.m;
+            obj.m_y = obj.spline_y.m;
+            obj.M_x = obj.spline_x.M;
+            obj.M_y = obj.spline_y.M;
+            
+            obj.coeffs_x = obj.spline_x.segments_coeffs;
+            obj.coeffs_y = obj.spline_y.segments_coeffs;
+        end
+        
+        function result = predict(obj, u_eval, der)
+            % Вычисление кривой или производных
+            if nargin < 3
+                der = 0;
+            end
+            
+            u_eval = u_eval(:);
+            
+            if der == 3
+                % Кривизна
+                result = obj.curvature(u_eval);
+                return;
+            end
+            
+            result = zeros(length(u_eval), 2);
+            
+            for k = 1:length(u_eval)
+                u = u_eval(k);
+                
+                if u < obj.u(1) || u > obj.u(end)
+                    result(k, :) = [NaN, NaN];
+                    continue;
+                end
+                
+                % Находим интервал
+                idx = find(obj.u <= u, 1, 'last');
+                if idx < 1
+                    idx = 1;
+                elseif idx > obj.n-1
+                    idx = obj.n-1;
+                end
+                idx = find(obj.u <= u, 1, 'last');
+
+                % !!! ДОБАВЛЕНА ПРОВЕРКА НА ПУСТОЙ МАССИВ !!!
+                if isempty(idx) || idx < 1
+                    idx = 1;
+                elseif idx > obj.n-1
+                    idx = obj.n-1;
+                end               
+                
+                t = u - obj.u(idx);
+                
+                % X компонента
+                coeffs_x = obj.coeffs_x{idx};
+                a3_x = coeffs_x(1); a4_x = coeffs_x(2); a5_x = coeffs_x(3);
+                
+                switch der
+                    case 0
+                        x_val = obj.v_x(idx) + obj.m_x(idx)*t + ...
+                            0.5*obj.M_x(idx)*t^2 + a3_x*t^3 + a4_x*t^4 + a5_x*t^5;
+                    case 1
+                        x_val = obj.m_x(idx) + obj.M_x(idx)*t + ...
+                            3*a3_x*t^2 + 4*a4_x*t^3 + 5*a5_x*t^4;
+                    case 2
+                        x_val = obj.M_x(idx) + 6*a3_x*t + 12*a4_x*t^2 + 20*a5_x*t^3;
+                end
+                
+                % Y компонента
+                coeffs_y = obj.coeffs_y{idx};
+                a3_y = coeffs_y(1); a4_y = coeffs_y(2); a5_y = coeffs_y(3);
+                
+                switch der
+                    case 0
+                        y_val = obj.v_y(idx) + obj.m_y(idx)*t + ...
+                            0.5*obj.M_y(idx)*t^2 + a3_y*t^3 + a4_y*t^4 + a5_y*t^5;
+                    case 1
+                        y_val = obj.m_y(idx) + obj.M_y(idx)*t + ...
+                            3*a3_y*t^2 + 4*a4_y*t^3 + 5*a5_y*t^4;
+                    case 2
+                        y_val = obj.M_y(idx) + 6*a3_y*t + 12*a4_y*t^2 + 20*a5_y*t^3;
+                end
+                
+                result(k, :) = [x_val, y_val];
+            end
+            
+            % Нормализация касательных векторов
+            if der == 1
+                norms = sqrt(sum(result.^2, 2));
+                norms(norms == 0) = 1;
+                result = result ./ norms;
+            end
+        end
+        
+        function curvature = curvature(obj, u_eval)
+            % Вычисление кривизны
+            u_eval = u_eval(:);
+            curvature = zeros(size(u_eval));
+            
+            for k = 1:length(u_eval)
+                u = u_eval(k);
+                
+                if u < obj.u(1) || u > obj.u(end)
+                    curvature(k) = NaN;
+                    continue;
+                end
+                
+                % Находим интервал
+                idx = find(obj.u <= u, 1, 'last');
+                if idx < 1
+                    idx = 1;
+                elseif idx > obj.n-1
+                    idx = obj.n-1;
+                end
+                
+                t = u - obj.u(idx);
+                
+                % Первые производные
+                coeffs_x = obj.coeffs_x{idx};
+                a3_x = coeffs_x(1); a4_x = coeffs_x(2); a5_x = coeffs_x(3);
+                xp = obj.m_x(idx) + obj.M_x(idx)*t + ...
+                    3*a3_x*t^2 + 4*a4_x*t^3 + 5*a5_x*t^4;
+                
+                coeffs_y = obj.coeffs_y{idx};
+                a3_y = coeffs_y(1); a4_y = coeffs_y(2); a5_y = coeffs_y(3);
+                yp = obj.m_y(idx) + obj.M_y(idx)*t + ...
+                    3*a3_y*t^2 + 4*a4_y*t^3 + 5*a5_y*t^4;
+                
+                % Вторые производные
+                xpp = obj.M_x(idx) + 6*a3_x*t + 12*a4_x*t^2 + 20*a5_x*t^3;
+                ypp = obj.M_y(idx) + 6*a3_y*t + 12*a4_y*t^2 + 20*a5_y*t^3;
+                
+                % Кривизна
+                numerator = xp*ypp - yp*xpp;
+                denominator = (xp^2 + yp^2)^1.5;
+                
+                if denominator ~= 0
+                    curvature(k) = numerator / denominator;
+                end
+            end
+        end
+        
+        function L = length(obj, n_samples)
+            % Оценка длины кривой
+            if nargin < 2
+                n_samples = 1000;
+            end
+            
+            u_fine = linspace(obj.u(1), obj.u(end), n_samples)';
+            points = obj.predict(u_fine, 0);
+            diffs = diff(points, 1);
+            L = sum(sqrt(sum(diffs.^2, 2)));
+        end
+    end
+end
+classdef SurfaceRevolutionMapper < handle
+    %SURFACEREVOLUTIONMAPPER Модуль конвертации параметрической образующей в поверхность вращения
+    %   Работает с объектом ParametricQuinticSpline, который задает профиль в плоскости ZR.
+    %   Предполагается, что x-координата кривой -> Z (ось изделия), y-координата -> R (радиус).
+    
+    properties (Access = private)
+        generatrix % Объект класса ParametricQuinticSpline (образующая в плоскости)
+    end
+    
+    methods
+        function obj = SurfaceRevolutionMapper(generatrix)
+            %SURFACEREVOLUTIONMAPPER Конструктор
+            %   generatrix: Объект ParametricQuinticSpline, описывающий профиль (Z vs R)
+            
+            if nargin < 1
+                error('Необходимо передать объект ParametricQuinticSpline.');
+            end
+            
+            obj.generatrix = generatrix;
+        end
+        
+        %% --- Основная геометрия ---
+        
+        function [X, Y, Z] = getPosition(obj, u, v)
+            %GETPOSITION Вычисляет декартовы координаты точки на поверхности
+
+            % Сохраняем исходный размер сетки (например, 60x50)
+            originalSize = size(u);
+
+            % Получаем данные из сплайна (predict вернет вектор-столбец)
+            curveData = obj.generatrix.predict(u, 0);
+
+            % Извлекаем координаты (пока это векторы)
+            Z_vec = curveData(:, 1);
+            R_vec = curveData(:, 2);
+
+            % !!! Ключевой момент: преобразуем векторы обратно в матрицы сетки !!!
+            Z_vals = reshape(Z_vec, originalSize);
+            R_vals = reshape(R_vec, originalSize);
+
+            % Вычисляем X и Y (теперь это матричные операции, которые работают корректно)
+            X = R_vals .* cos(v);
+            Y = R_vals .* sin(v);
+
+            % Z уже матрица
+            Z = Z_vals;
+        end
+        function splineObj = getSpline(obj)
+            %GETSPLINE Возвращает объект параметрического сплайна образующей
+            splineObj = obj.generatrix;
+        end
+        function [ru, rv] = getFirstDerivatives(obj, u, v)
+            %GETFIRSTDERIVATIVES Вычисляет касательные вектора r_u и r_v
+            %   Возвращает векторы размера 3xN (где N - число точек)
+            
+            % Первые производные кривой (dZ/du, dR/du)
+            curveDer1 = obj.generatrix.predict(u, 1);
+            Z1 = curveDer1(:, 1);
+            R1 = curveDer1(:, 2);
+            
+            % Значения радиуса (нужны для r_v)
+            curveData = obj.generatrix.predict(u, 0);
+            R0 = curveData(:, 2);
+            
+            cos_v = cos(v);
+            sin_v = sin(v);
+            
+            % Вектор касательный к образующей (r_u)
+            % r_u = [ R' * cos(v); R' * sin(v); Z' ]
+            ru = [R1 .* cos_v; R1 .* sin_v; Z1];
+            
+            % Вектор касательный к параллели (r_v)
+            % r_v = [ -R * sin(v); R * cos(v); 0 ]
+            rv = [-R0 .* sin_v; R0 .* cos_v; zeros(size(u))];
+        end
+        
+        function [E, F, G] = getMetricCoeffs(obj, u)
+            %GETMETRICCOEFFS Вычисляет коэффициенты первой квадратичной формы
+            
+            % Получаем 1-е производные
+            curveDer1 = obj.generatrix.predict(u, 1);
+            Z1 = curveDer1(:, 1);
+            R1 = curveDer1(:, 2);
+            
+            % Получаем значения радиуса
+            curveData = obj.generatrix.predict(u, 0);
+            R0 = curveData(:, 2);
+            
+            % E = (Z')^2 + (R')^2
+            E = Z1.^2 + R1.^2;
+            
+            % G = R^2
+            G = R0.^2;
+            
+            % F = 0
+            F = zeros(size(u));
+        end
+        
+        %% --- Данные для уравнений геодезических ---
+        
+        function Gamma = getChristoffelSymbols(obj, u)
+            %GETCHRISTOFFELSYMBOLS Вычисляет символы Кристоффеля 2-го рода
+            %   Использует упрощенные формулы для поверхности вращения.
+            
+            % Получаем 1-е и 2-е производные
+            curveDer1 = obj.generatrix.predict(u, 1);
+            Z1 = curveDer1(:, 1);
+            R1 = curveDer1(:, 2);
+            
+            curveDer2 = obj.generatrix.predict(u, 2);
+            Z2 = curveDer2(:, 1);
+            R2 = curveDer2(:, 2);
+            
+            % Получаем радиус
+            curveData = obj.generatrix.predict(u, 0);
+            R0 = curveData(:, 2);
+            
+            % Коэффициенты метрики
+            E = Z1.^2 + R1.^2;
+            G = R0.^2;
+            
+            % Производные коэффициентов метрики по u
+            Et = 2 .* (Z1 .* Z2 + R1 .* R2);
+            Gt = 2 .* R0 .* R1;
+            
+            % Вычисляем символы
+            eps_val = 1e-12; 
+            E_safe = max(E, eps_val);
+            G_safe = max(G, eps_val);
+            
+            Gamma = struct();
+            
+            Gamma.uuu = Et ./ (2 .* E_safe); % Гамма^1_11 (u corresponds to t)
+            Gamma.uvv = -Gt ./ (2 .* E_safe); % Гамма^1_22
+            
+            Gamma.vuv = Gt ./ (2 .* G_safe);  % Гамма^2_12 (v corresponds to angle)
+            Gamma.vvu = Gt ./ (2 .* G_safe);  % Гамма^2_21
+        end
+    end
+end
+
+classdef GeodesicSolver < handle
+    %GEODESICSOLVER Планировщик траектории (Решатель геодезических)
+    %   Вычисляет путь на поверхности вращения от начальной точки до целевой,
+    %   используя дифференциальные уравнения геодезических линий.
+    
+    properties (Access = private)
+        mapper          % Объект SurfaceRevolutionMapper
+        u_target        % Целевой параметр образующей
+        v_target        % Целевой угловой параметр
+        stopTolerance   % Допуск остановки (радиус "мишени")
+    end
+    
+    methods
+        function obj = GeodesicSolver(mapper)
+            %GEODESICSOLVER Конструктор
+            %   mapper: Объект класса Splines.SurfaceRevolutionMapper
+            
+            if nargin < 1
+                error('Необходимо передать SurfaceMapper');
+            end
+            obj.mapper = mapper;
+        end
+        
+        function pathStruct = solve(obj, u0, v0, alpha0, u_target, v_target, tolerance)
+            %SOLVE Расчет траектории
+            %   u0, v0: Начальные параметры
+            %   alpha0: Начальный угол намотки (радианы)
+            %   u_target, v_target: Целевые параметры
+            %   tolerance: Радиус зоны остановки
+            
+            if nargin < 7
+                tolerance = 1e-3; % Дефолтный допуск
+            end
+            
+            % Сохраняем цель для функции событий
+            obj.u_target = u_target;
+            obj.v_target = v_target;
+            obj.stopTolerance = tolerance;
+            
+            % 1. Вычисляем начальные скорости (u', v') из угла alpha0
+            % Получаем метрику в начальной точке
+            [E, ~, G] = obj.mapper.getMetricCoeffs(u0);
+            
+            % Нормировка скорости (ds - длина дуги, поэтому u'^2*E + v'^2*G = 1)
+            % u' = cos(alpha) / sqrt(E)
+            % v' = sin(alpha) / sqrt(G)
+            
+            % Защита от деления на ноль
+            E = max(E, 1e-12);
+            G = max(G, 1e-12);
+            
+            u_prime0 = cos(alpha0) / sqrt(E);
+            v_prime0 = sin(alpha0) / sqrt(G);
+            
+            % Вектор начального состояния Y = [u; v; u'; v']
+            Y0 = [u0; v0; u_prime0; v_prime0];
+            
+            % 2. Настройка решателя (включая функцию остановки)
+            options = odeset('RelTol', 1e-6, 'AbsTol', 1e-9, ...
+                             'Events', @obj.eventsFunction);
+            
+            % 3. Интегрирование
+            % Интегрируем до бесконечности (по факту до срабатывания Events)
+            fprintf('Запуск расчета траектории...\n');
+            [T, Y] = ode15s(@obj.systemEquations, [0 Inf], Y0, options);
+            fprintf('Расчет завершен. Точек траектории: %d\n', length(T));
+            
+            % 4. Преобразование параметров в декартовы координаты
+            u_sol = Y(:, 1);
+            v_sol = Y(:, 2);
+            
+            [X, Y_cart, Z] = obj.mapper.getPosition(u_sol, v_sol);
+            
+            % 5. Формирование результата
+            pathStruct.u = u_sol;
+            pathStruct.v = v_sol;
+            pathStruct.s = T;       % Длина дуги (параметр интегрирования)
+            pathStruct.X = X;
+            pathStruct.Y = Y_cart;  % Переименовываем, чтобы не конфликтовать с вектором состояния Y
+            pathStruct.Z = Z;
+        end
+    end
+    
+    methods (Access = private)
+%         %% Система дифференциальных уравнений
+%         function dY = systemEquations(obj, ~, Y)
+%     %SYSTEMEQUATIONS Уравнения геодезических с защитой от NaN
+%     
+%             % Распаковка
+%             u = Y(1);
+%             v = Y(2);
+%             u_prime = Y(3);
+%             v_prime = Y(4);
+% 
+%             % Получаем ссылку на сплайн
+% %             gen = obj.mapper.generatrix;
+%            gen = obj.mapper.getSpline();
+% 
+%             % --- ЗАЩИТА 1: Клиппинг параметра u ---
+%             % Не даем уйти за границы определения сплайна (даже при пробных шагах решателя)
+%             u_min = gen.u(1);
+%             u_max = gen.u(end);
+%             u = max(min(u, u_max), u_min); 
+% 
+%             % Получаем данные из сплайнов
+%             % Первые производные
+%             der1 = gen.predict(u, 1); 
+%             Z1 = der1(1);
+%             R1 = der1(2);
+% 
+%             % Вторые производные
+%             der2 = gen.predict(u, 2);
+%             Z2 = der2(1);
+%             R2 = der2(2);
+% 
+%             % Радиус
+%             data = gen.predict(u, 0);
+%             R0 = data(2);
+% 
+%             % --- ЗАЩИТА 2: Защита радиуса ---
+%             % Если сплайн "уходит" в отрицательный радиус из-за осцилляций, 
+% %             // считаем, что радиус минимально положительный (например, 1 мм)
+%             R0 = max(R0, 1e-3); 
+%             R1 = max(R1, 1e-3); % Защита производной тоже не помешает
+% 
+%             % Вычисляем метрику
+%             E = Z1^2 + R1^2;
+%             G = R0^2;
+% 
+%             % Производные метрики
+%             E_prime = 2 * (Z1 * Z2 + R1 * R2);
+%             G_prime = 2 * R0 * R1;
+% 
+%             % --- ЗАЩИТА 3: Избегаем деления на ноль ---
+%             % Добавляем машинный эпсилон к знаменателям
+%             eps_val = 1e-12;
+%             E_safe = max(E, eps_val);
+%             G_safe = max(G, eps_val);
+% 
+%             % Ускорения
+%             du_prime = - (E_prime / (2 * E_safe)) * u_prime^2 + (G_prime / (2 * E_safe)) * v_prime^2;
+%             dv_prime = - (G_prime / G_safe) * u_prime * v_prime;
+% 
+%             % Возвращаем производные
+%             dY = [u_prime; v_prime; du_prime; dv_prime];
+%        end
+        
+        function dY = systemEquations(obj, ~, Y)
+            %SYSTEMEQUATIONS Уравнения геодезических на поверхности вращения
+            
+            % Распаковка вектора состояния
+            u = Y(1);
+            v = Y(2); % хотя v не используется явно в ускорениях, он есть в состоянии
+            u_prime = Y(3);
+            v_prime = Y(4);
+            
+            % Получаем данные из сплайнов образующей
+            % Обращаемся к generatrix (ParametricQuinticSpline) внутри маппера
+%             gen = obj.mapper.generatrix;
+            gen = obj.mapper.getSpline();
+            
+            % Первые производные (d/du)
+            der1 = gen.predict(u, 1); 
+            Z1 = der1(1);
+            R1 = der1(2);
+            
+            % Вторые производные (d^2/du^2)
+            der2 = gen.predict(u, 2);
+            Z2 = der2(1);
+            R2 = der2(2);
+            
+            % Значение радиуса
+            data = gen.predict(u, 0);
+            R0 = data(2);
+            
+            % Вычисляем коэффициенты метрики и их производные
+            % E = (Z')^2 + (R')^2
+            E = Z1^2 + R1^2;
+            
+            % G = R^2
+            G = R0^2;
+            
+            % Производные метрики
+            % E' = 2 * (Z'*Z'' + R'*R'')
+            E_prime = 2 * (Z1 * Z2 + R1 * R2);
+            
+            % G' = 2 * R * R'
+            G_prime = 2 * R0 * R1;
+            
+            % Ускорения (вторые производные по s)
+            % u'' = - (E' / 2E) * (u')^2 + (G' / 2E) * (v')^2
+            du_prime = - (E_prime / (2 * E)) * u_prime^2 + (G_prime / (2 * E)) * v_prime^2;
+            
+            % v'' = - (G' / G) * u' * v'
+            dv_prime = - (G_prime / G) * u_prime * v_prime;
+            
+            % Возвращаем производные вектора состояния [u'; v'; u''; v'']
+            dY = [u_prime; v_prime; du_prime; dv_prime];
+        end
+        
+        %% Функция событий (Остановка у цели)
+        
+%         function [value, isterminal, direction] = eventsFunction(obj, ~, Y)
+%             %EVENTSFUNCTION Определяет, когда остановить интеграцию
+%             
+%             u_curr = Y(1);
+%             v_curr = Y(2);
+%             
+%             % Расстояние в квадрате до целевой точки в пространстве параметров (u, v)
+%             dist_sq = (u_curr - obj.u_target)^2 + (v_curr - obj.v_target)^2;
+%             
+%             % Событие: когда расстояние становится меньше допуска (то есть dist^2 - tol^2 < 0)
+%             value = dist_sq - (obj.stopTolerance)^2;
+%             
+%             isterminal = 1; % Остановить интеграцию при пересечении нуля
+%             direction = -1; % Остановить только при движении к уменьшению расстояния
+%         end
+        function [value, isterminal, direction] = eventsFunction(obj, ~, Y)
+            u_curr = Y(1);
+            v_curr = Y(2);
+
+            % 1. Проверка выхода за пределы оправки (Safety stop)
+            if u_curr >= obj.u_target || u_curr <= obj.u_target 
+               % (для обратного хода, если нужно)
+               value = 1; 
+               isterminal = 1;
+               direction = -1;
+               return;
+            end
+
+            % 2. Проверка достижения целевого угла (Your actual goal)
+            % Останавливаемся, когда v_curr превысил v_target
+            value = v_curr - obj.v_target; 
+
+            isterminal = 1; % Остановить интеграцию
+            direction = 1;   % При пересечении снизу вверх
+        end
+    end
+end
+
+%% Клиентский скрипт для моделирования намотки баллона давления
+% Описание: Генерирует профиль "Сфера - Цилиндр - Сфера", строит сглаживающий сплайн
+% и рассчитывает геодезическую траекторию.
+
+clear; clc; close all;
+
+%% 1. Параметры геометрии баллона
+R_sphere = 3.0;              % Радиус сферических полюсов (м)
+L_cyl = 2.0;                 % Длина цилиндрической части (м)
+delta_theta = deg2rad(5);   % Угол среза полюсов (насколько "отрезана" вершина)
+
+% Плотность точек для генерации исходных данных
+points_per_segment = 7;
+
+%% 2. Генерация точек профиля (Сборка "сырых" данных)
+% Мы формируем точки в формате [Z, R], где Z - высота, R - радиус
+
+% --- Левая сфера (срезанная) ---
+% Центр левой сферы в Z=0. Полюс был бы в -R.
+% Параметр theta меняется от -pi/2 + delta (срез) до 0 (экватор)
+theta_left = linspace(-pi/2 + delta_theta, 0, points_per_segment)';
+z_left = R_sphere * sin(theta_left);
+r_left = R_sphere * cos(theta_left);
+
+% --- Цилиндр ---
+% От экватора (Z=0) до Z=L_cyl
+z_cyl = linspace(0, L_cyl, points_per_segment)';
+r_cyl = ones(size(z_cyl)) * R_sphere;
+
+% --- Правая сфера (срезанная) ---
+% Центр правой сферы в Z=L_cyl.
+% Параметр theta меняется от 0 (экватор) до pi/2 - delta (срез)
+theta_right = linspace(0, pi/2 - delta_theta, points_per_segment)';
+z_right = L_cyl + R_sphere * sin(theta_right);
+r_right = R_sphere * cos(theta_right);
+
+% Объединяем все точки в один массив
+% points_clean = [z_left, r_left; 
+%                 z_cyl, r_cyl; 
+%                 z_right, r_right];
+% Объединение с удалением дубликатов на стыках
+points_clean = [z_left(1:end-1), r_left(1:end-1);      % Берем все, кроме последней
+                z_cyl(1:end-1), r_cyl(1:end-1);        % Берем все, кроме последней
+                z_right, r_right];                     % Берем все, т.к. правый конец финальный
+% Добавляем шум (имитация ошибок измерения), чтобы продемонстрировать сглаживание
+rng(42); % Фиксируем random seed для повторяемости
+noise_level = 0; 
+points_noisy = points_clean + noise_level * randn(size(points_clean));
+
+% Защита: радиус не должен быть отрицательным
+points_noisy(:, 2) = max(points_noisy(:, 2), 0.01);
+
+%% 3. Построение математической модели (Сглаживающий сплайн)
+% Граничные условия:
+% На полюсах касательная вертикальна (вдоль оси Z).
+% Вектор направления [dz, dr] = [1, 0].
+% Кривизна полюсов равна 1/R_sphere.
+
+% bc_start = struct('direction', [1.0, 0.0], 'curvature', 1.0/R_sphere);
+% --- Расчет граничных условий для левого полюса ---
+% Направление: [sin(delta), cos(delta)]
+% Кривизна: 1 / R
+bc_start = struct( ...
+    'direction', [sin(delta_theta), cos(delta_theta)], ...
+    'curvature', 1.0 / R_sphere ...
+);
+% bc_end   = struct('direction', [1.0, 0.0], 'curvature', 1.0/R_sphere);
+% --- Для правого полюса (симметрия) ---
+% Для правой сферы все зеркально, но если вы считаете от экватора к полюсу,
+% логика меняется. Если же у вас точки уже сгенерированы от 0 до pi/2-delta,
+% то направление будет:
+% theta_end = pi/2 - delta_theta
+% direction = [cos(theta_end), -sin(theta_end)] -> [sin(delta), -cos(delta)]
+% Кривизна та же.
+
+bc_end = struct( ...
+    'direction', [sin(delta_theta), -cos(delta_theta)], ...
+    'curvature', 1.0 / R_sphere ...
+);
+fprintf('Создание сплайна из %d точек...\n', size(points_noisy, 1));
+spline = Splines.ParametricQuinticSpline(points_noisy, bc_start, bc_end);
+
+% Обучаем сплайн (alpha=0.9 означает сильное сглаживание шума)
+spline.fit(0.9);
+fprintf('Сглаживание завершено.\n');
+
+%% 4. Создание поверхности и расчет траектории
+% Инициализируем маппер поверхности
+mapper = Geometry.SurfaceRevolutionMapper(spline);
+
+% Инициализируем решатель геодезических
+solver = Solver.GeodesicSolver(mapper);
+
+% Параметры задачи траектории
+u_start = spline.u(1);           % Начало левого полюса
+u_end   = spline.u(end);         % Конец правого полюса
+alpha_0 = deg2rad(45);           % Угол намотки 45 градусов
+
+% Целевой угол: делаем 2.5 оборота, чтобы получилась красивая спираль
+v_target = 2*pi;         
+% disp u_start  u_end alpha_0 v_target
+fprintf('Расчет геодезической траектории...\n');
+% Запускаем решатель. Допуск 1e-2 гарантирует точное попадание в конец баллона
+% path = solver.solve(u_start, 0, alpha_0, u_end, v_target, 0.01);
+% Передаем u_end только как границу безопасности или для справки
+% Но в eventsFunction лучше явно прописать u_end
+path = solver.solve(u_start, 0, alpha_0, u_end, v_target, 1e-20);
+fprintf('Траектория рассчитана. Длина пути: %.2f м\n', path.s(end));
+
+%% 5. Визуализация результатов
+figure('Name', 'Моделирование намотки баллона', 'Color', 'w', 'Position', [100, 100, 1200, 600]);
+
+% --- График 1: Профиль (Образующая) ---
+subplot(1, 2, 1);
+plot(points_noisy(:,1), points_noisy(:,2), 'k.', 'MarkerSize', 4, 'DisplayName', 'Шумные точки');
+hold on;
+% Рисуем сглаженный сплайн
+[U_line, V_line] = meshgrid(spline.u, 0);
+[X_line, Y_line, Z_line] = mapper.getPosition(U_line, V_line);
+plot(X_line, Z_line, 'r-', 'LineWidth', 2, 'DisplayName', 'Сглаженный сплайн');
+
+title('Образующая баллона');
+xlabel('Z (Высота), м'); ylabel('R (Радиус), м');
+legend('show'); grid on; axis equal;
+xlim([min(points_noisy(:,1))-0.2, max(points_noisy(:,1))+0.2]);
+
+% --- График 2: 3D Траектория ---
+subplot(1, 2, 2);
+% Рисуем сетку поверхности (баллон)
+u_plot = linspace(spline.u(1), spline.u(end), 50);
+v_plot = linspace(0, 2*pi, 60);
+[U, V] = meshgrid(u_plot, v_plot);
+[X, Y, Z_cart] = mapper.getPosition(U, V);
+
+surf(X, Y, Z_cart, 'EdgeColor', 'none', 'FaceAlpha', 0.3, 'FaceColor', [0.85, 0.9, 1.0]);
+hold on;
+
+% Рисуем траекторию нити
+plot3(path.X, path.Y, path.Z, 'r-', 'LineWidth', 2, 'DisplayName', 'Нить');
+
+% Маркеры старта и финиша
+plot3(path.X(1), path.Y(1), path.Z(1), 'go', 'MarkerFaceColor', 'g', 'MarkerSize', 8, 'LineWidth', 1.5, 'DisplayName', 'Старт');
+plot3(path.X(end), path.Y(end), path.Z(end), 'ro', 'MarkerFaceColor', 'r', 'MarkerSize', 8, 'LineWidth', 1.5, 'DisplayName', 'Финиш');
+
+title('3D Модель намотки');
+xlabel('X, м'); ylabel('Y, м'); zlabel('Z, м');
+legend('show'); axis equal; view(45, 20);
+light; lighting gouraud; % Добавляем свет для объема
