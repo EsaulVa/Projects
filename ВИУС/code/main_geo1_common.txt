@@ -779,121 +779,108 @@ classdef GeodesicSolver < handle
     end
     
     methods (Access = private)
-%         %% Система дифференциальных уравнений
+                function dY = systemEquations(obj, ~, Y)
+            %SYSTEMEQUATIONS Уравнения геодезических с защитой
+            
+            u = Y(1);
+            v = Y(2);
+            u_prime = Y(3);
+            v_prime = Y(4);
+            
+            gen = obj.mapper.getSpline();
+            
+            % --- ЗАЩИТА 1: Ограничение параметра u ---
+            % Если солвер шагнул за границу сплайна, мы принудительно возвращаем его
+            % на границу. Это предотвращает NaN и создает "стенку".
+            u_min = gen.u(1);
+            u_max = gen.u(end);
+            u_safe = max(min(u, u_max), u_min);
+            
+            % Вычисляем производные только для безопасного u
+            der1 = gen.predict(u_safe, 1); 
+            Z1 = der1(1); R1 = der1(2);
+            
+            der2 = gen.predict(u_safe, 2);
+            Z2 = der2(1); R2 = der2(2);
+            
+            data = gen.predict(u_safe, 0);
+            R0 = data(2);
+            
+            % --- ЗАЩИТА 2: Геометрия (Радиус) ---
+            % Если радиус стал очень мал (или отрицателен из-за осцилляций сплайна)
+            R0 = max(R0, 1e-4);
+            
+            % Метрика
+            E = Z1^2 + R1^2;
+            G = R0^2;
+            
+            E_prime = 2 * (Z1 * Z2 + R1 * R2);
+            G_prime = 2 * R0 * R1;
+            
+            % --- ЗАЩИТА 3: Деление на ноль ---
+            eps_val = 1e-12;
+            E_safe = max(E, eps_val);
+            G_safe = max(G, eps_val);
+            
+            % Ускорения
+            du_prime = - (E_prime / (2 * E_safe)) * u_prime^2 + (G_prime / (2 * E_safe)) * v_prime^2;
+            dv_prime = - (G_prime / G_safe) * u_prime * v_prime;
+            
+            dY = [u_prime; v_prime; du_prime; dv_prime];
+        end
+        
 %         function dY = systemEquations(obj, ~, Y)
-%     %SYSTEMEQUATIONS Уравнения геодезических с защитой от NaN
-%     
-%             % Распаковка
+%             %SYSTEMEQUATIONS Уравнения геодезических на поверхности вращения
+% 
+%             % Распаковка вектора состояния
 %             u = Y(1);
-%             v = Y(2);
+%             v = Y(2); % хотя v не используется явно в ускорениях, он есть в состоянии
 %             u_prime = Y(3);
 %             v_prime = Y(4);
 % 
-%             % Получаем ссылку на сплайн
+%             % Получаем данные из сплайнов образующей
+%             % Обращаемся к generatrix (ParametricQuinticSpline) внутри маппера
 % %             gen = obj.mapper.generatrix;
-%            gen = obj.mapper.getSpline();
+%             gen = obj.mapper.getSpline();
 % 
-%             % --- ЗАЩИТА 1: Клиппинг параметра u ---
-%             % Не даем уйти за границы определения сплайна (даже при пробных шагах решателя)
-%             u_min = gen.u(1);
-%             u_max = gen.u(end);
-%             u = max(min(u, u_max), u_min); 
-% 
-%             % Получаем данные из сплайнов
-%             % Первые производные
+%             % Первые производные (d/du)
 %             der1 = gen.predict(u, 1); 
 %             Z1 = der1(1);
 %             R1 = der1(2);
 % 
-%             % Вторые производные
+%             % Вторые производные (d^2/du^2)
 %             der2 = gen.predict(u, 2);
 %             Z2 = der2(1);
 %             R2 = der2(2);
 % 
-%             % Радиус
+%             % Значение радиуса
 %             data = gen.predict(u, 0);
 %             R0 = data(2);
 % 
-%             % --- ЗАЩИТА 2: Защита радиуса ---
-%             % Если сплайн "уходит" в отрицательный радиус из-за осцилляций, 
-% %             // считаем, что радиус минимально положительный (например, 1 мм)
-%             R0 = max(R0, 1e-3); 
-%             R1 = max(R1, 1e-3); % Защита производной тоже не помешает
-% 
-%             % Вычисляем метрику
+%             % Вычисляем коэффициенты метрики и их производные
+%             % E = (Z')^2 + (R')^2
 %             E = Z1^2 + R1^2;
+% 
+%             % G = R^2
 %             G = R0^2;
 % 
 %             % Производные метрики
+%             % E' = 2 * (Z'*Z'' + R'*R'')
 %             E_prime = 2 * (Z1 * Z2 + R1 * R2);
+% 
+%             % G' = 2 * R * R'
 %             G_prime = 2 * R0 * R1;
 % 
-%             % --- ЗАЩИТА 3: Избегаем деления на ноль ---
-%             % Добавляем машинный эпсилон к знаменателям
-%             eps_val = 1e-12;
-%             E_safe = max(E, eps_val);
-%             G_safe = max(G, eps_val);
+%             % Ускорения (вторые производные по s)
+%             % u'' = - (E' / 2E) * (u')^2 + (G' / 2E) * (v')^2
+%             du_prime = - (E_prime / (2 * E)) * u_prime^2 + (G_prime / (2 * E)) * v_prime^2;
 % 
-%             % Ускорения
-%             du_prime = - (E_prime / (2 * E_safe)) * u_prime^2 + (G_prime / (2 * E_safe)) * v_prime^2;
-%             dv_prime = - (G_prime / G_safe) * u_prime * v_prime;
+%             % v'' = - (G' / G) * u' * v'
+%             dv_prime = - (G_prime / G) * u_prime * v_prime;
 % 
-%             % Возвращаем производные
+%             % Возвращаем производные вектора состояния [u'; v'; u''; v'']
 %             dY = [u_prime; v_prime; du_prime; dv_prime];
-%        end
-        
-        function dY = systemEquations(obj, ~, Y)
-            %SYSTEMEQUATIONS Уравнения геодезических на поверхности вращения
-            
-            % Распаковка вектора состояния
-            u = Y(1);
-            v = Y(2); % хотя v не используется явно в ускорениях, он есть в состоянии
-            u_prime = Y(3);
-            v_prime = Y(4);
-            
-            % Получаем данные из сплайнов образующей
-            % Обращаемся к generatrix (ParametricQuinticSpline) внутри маппера
-%             gen = obj.mapper.generatrix;
-            gen = obj.mapper.getSpline();
-            
-            % Первые производные (d/du)
-            der1 = gen.predict(u, 1); 
-            Z1 = der1(1);
-            R1 = der1(2);
-            
-            % Вторые производные (d^2/du^2)
-            der2 = gen.predict(u, 2);
-            Z2 = der2(1);
-            R2 = der2(2);
-            
-            % Значение радиуса
-            data = gen.predict(u, 0);
-            R0 = data(2);
-            
-            % Вычисляем коэффициенты метрики и их производные
-            % E = (Z')^2 + (R')^2
-            E = Z1^2 + R1^2;
-            
-            % G = R^2
-            G = R0^2;
-            
-            % Производные метрики
-            % E' = 2 * (Z'*Z'' + R'*R'')
-            E_prime = 2 * (Z1 * Z2 + R1 * R2);
-            
-            % G' = 2 * R * R'
-            G_prime = 2 * R0 * R1;
-            
-            % Ускорения (вторые производные по s)
-            % u'' = - (E' / 2E) * (u')^2 + (G' / 2E) * (v')^2
-            du_prime = - (E_prime / (2 * E)) * u_prime^2 + (G_prime / (2 * E)) * v_prime^2;
-            
-            % v'' = - (G' / G) * u' * v'
-            dv_prime = - (G_prime / G) * u_prime * v_prime;
-            
-            % Возвращаем производные вектора состояния [u'; v'; u''; v'']
-            dY = [u_prime; v_prime; du_prime; dv_prime];
-        end
+%         end
         
         %% Функция событий (Остановка у цели)
         
@@ -912,25 +899,46 @@ classdef GeodesicSolver < handle
 %             isterminal = 1; % Остановить интеграцию при пересечении нуля
 %             direction = -1; % Остановить только при движении к уменьшению расстояния
 %         end
-        function [value, isterminal, direction] = eventsFunction(obj, ~, Y)
+        % function [value, isterminal, direction] = eventsFunction(obj, ~, Y)
+        %     u_curr = Y(1);
+        %     v_curr = Y(2);
+        % 
+        %     % 1. Проверка выхода за пределы оправки (Safety stop)
+        %     if u_curr >= obj.u_target || u_curr <= obj.u_target 
+        %        % (для обратного хода, если нужно)
+        %        value = 1; 
+        %        isterminal = 1;
+        %        direction = -1;
+        %        return;
+        %     end
+        % 
+        %     % 2. Проверка достижения целевого угла (Your actual goal)
+        %     % Останавливаемся, когда v_curr превысил v_target
+        %     value = v_curr - obj.v_target; 
+        % 
+        %     isterminal = 1; % Остановить интеграцию
+        %     direction = 1;   % При пересечении снизу вверх
+        % end
+            function [value, isterminal, direction] = eventsFunction(obj, ~, Y)
             u_curr = Y(1);
             v_curr = Y(2);
 
-            % 1. Проверка выхода за пределы оправки (Safety stop)
-            if u_curr >= obj.u_target || u_curr <= obj.u_target 
-               % (для обратного хода, если нужно)
-               value = 1; 
-               isterminal = 1;
-               direction = -1;
-               return;
-            end
+            % Событие 1: Достижение конца оправки по длине (u)
+            % value = u - u_target. Пересечение нуля снизу вверх.
+            val_u = u_curr - obj.u_target;
+            
+            % Событие 2: Достижение целевого угла намотки (v)
+            % value = v - v_target. Пересечение нуля снизу вверх.
+            val_v = v_curr - obj.v_target;
 
-            % 2. Проверка достижения целевого угла (Your actual goal)
-            % Останавливаемся, когда v_curr превысил v_target
-            value = v_curr - obj.v_target; 
-
-            isterminal = 1; % Остановить интеграцию
-            direction = 1;   % При пересечении снизу вверх
+            % Объединяем события. ode15s ожидает векторы.
+            value = [val_u; val_v];
+            
+            % isterminal = 1 означает "остановиться при событии"
+            isterminal = [1; 1];
+            
+            % direction = 1 означает "срабатывать только при переходе через 0 снизу вверх"
+            direction = [1; 1];
         end
     end
 end
@@ -1041,7 +1049,7 @@ fprintf('Расчет геодезической траектории...\n');
 % path = solver.solve(u_start, 0, alpha_0, u_end, v_target, 0.01);
 % Передаем u_end только как границу безопасности или для справки
 % Но в eventsFunction лучше явно прописать u_end
-path = solver.solve(u_start, 0, alpha_0, u_end, v_target, 1e-20);
+path = solver.solve(u_start, 0, alpha_0, u_end, v_target, 1e-2);
 fprintf('Траектория рассчитана. Длина пути: %.2f м\n', path.s(end));
 
 %% 5. Визуализация результатов

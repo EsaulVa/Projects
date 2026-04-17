@@ -1,0 +1,138 @@
+"""
+Контрольный пример: экваториальная траектория на эллипсоидах.
+"""
+
+import numpy as np
+import plotly.graph_objects as go
+from scipy.optimize import fsolve
+
+import numpy as np
+from scipy.integrate import solve_ivp
+import plotly.graph_objects as go
+
+# Импорт компонентов нашего фреймворка
+from geometry.ellipsoid import EllipsoidWithDerivatives
+from core.trajectory import Trajectory
+# from trajectory import register_builders  # регистрирует кубический сплайн
+from winding.rhs_calculator import RightHandSideCalculator
+from winding.scipy_solver import SciPySolver
+from winding.winding_builder import WindingLineBuilder
+
+"""
+Контрольный пример: экваториальная траектория на эллипсоидах.
+Исправленная версия с корректной обработкой JAX‑массивов.
+"""
+
+import numpy as np
+import plotly.graph_objects as go
+from scipy.optimize import root_scalar
+import jax.numpy as jnp
+
+# from geometry.ellipsoid import EllipsoidWithDerivatives
+# from trajectory.trajectory import Trajectory
+# from trajectory import register_builders
+# from winding.rhs_calculator import RightHandSideCalculator
+# from winding.scipy_solver import SciPySolver
+# from winding.winding_builder import WindingLineBuilder
+
+# ----------------------------------------------------------------------
+# 1. Эллипсоиды
+# ----------------------------------------------------------------------
+a1, b1, c1 = 3.0, 2.5, 2.0
+E1 = EllipsoidWithDerivatives(a1, b1, c1)
+
+scale = 0.6
+a2, b2, c2 = a1*scale, b1*scale, c1*scale
+E2 = EllipsoidWithDerivatives(a2, b2, c2)
+
+# ----------------------------------------------------------------------
+# 2. Экваториальная траектория на E1 (v = 0)
+# ----------------------------------------------------------------------
+v_fixed = 0.0
+u_start = 0.0
+u_end = 2 * np.pi
+num_points = 500
+
+u_vals = np.linspace(u_start, u_end, num_points)
+geo_points = np.array([np.array(E1.position(u, v_fixed)) for u in u_vals])
+
+print(f"Сгенерировано {len(geo_points)} точек экватора на E1.")
+traj = Trajectory.from_points(geo_points, method='cubic', bc_type='natural')
+print(f"Длина траектории: {traj.total_length:.3f}")
+
+# ----------------------------------------------------------------------
+# 3. Поиск начальной точки на E2 (линия тени для z=0)
+# ----------------------------------------------------------------------
+R0 = np.array(traj.R(0.0))
+
+def shadow_equation(v):
+    # v приходит как float
+    r_jax = E2.position(u_start, v)
+    n_jax = E2.normal(u_start, v)
+    # Преобразуем в numpy
+    r = np.array(r_jax)
+    n = np.array(n_jax)
+    return float(np.dot(R0 - r, n))
+
+# Используем root_scalar для надёжного поиска корня на интервале [-pi/2, pi/2]
+sol = root_scalar(shadow_equation, bracket=[-np.pi/2+0.1, np.pi/2-0.1], method='brentq')
+if not sol.converged:
+    raise RuntimeError("Не удалось найти начальную широту.")
+v0 = sol.root
+print(f"Начальная широта на E2: {v0:.4f}")
+
+# ----------------------------------------------------------------------
+# 4. Настройка и расчёт
+# ----------------------------------------------------------------------
+rhs_calc = RightHandSideCalculator(E2, traj, k=1.5, max_ds_dz=0.2)
+solver = SciPySolver(method='DOP853', rtol=1e-8, atol=1e-10)
+builder = WindingLineBuilder(E2, traj, rhs_calc, solver)
+
+z_eval = np.linspace(0, traj.total_length, 400)
+z_vals, line_3d = builder.compute(u_start, v0, z_eval=z_eval)
+uv_states = builder.get_uv_states()
+print(f"Рассчитано {len(z_vals)} точек.")
+
+# ----------------------------------------------------------------------
+# 5. Визуализация
+# ----------------------------------------------------------------------
+# Сетка для поверхностей
+u_grid = np.linspace(0, 2*np.pi, 60)
+v_grid = np.linspace(-np.pi/2, np.pi/2, 40)
+U, V = np.meshgrid(u_grid, v_grid)
+
+# Функция для безопасного получения 3D точек (JAX -> numpy)
+def surface_grid(surface, U, V):
+    pts = np.zeros((U.shape[0], U.shape[1], 3))
+    for i in range(U.shape[0]):
+        for j in range(U.shape[1]):
+            p = surface.position(U[i,j], V[i,j])
+            pts[i,j] = np.array(p)
+    return pts[...,0], pts[...,1], pts[...,2]
+
+X1, Y1, Z1 = surface_grid(E1, U, V)
+X2, Y2, Z2 = surface_grid(E2, U, V)
+
+fig = go.Figure()
+fig.add_trace(go.Surface(x=X1, y=Y1, z=Z1, opacity=0.2, colorscale='Blues', showscale=False, name='E1'))
+fig.add_trace(go.Surface(x=X2, y=Y2, z=Z2, opacity=0.3, colorscale='Reds', showscale=False, name='E2'))
+
+# Траектория R(z)
+fig.add_trace(go.Scatter3d(x=geo_points[:,0], y=geo_points[:,1], z=geo_points[:,2],
+                           mode='lines', line=dict(color='red', width=4), name='R(z) на E1 (экватор)'))
+
+# Линия укладки
+fig.add_trace(go.Scatter3d(x=line_3d[:,0], y=line_3d[:,1], z=line_3d[:,2],
+                           mode='lines', line=dict(color='blue', width=4), name='Линия укладки на E2'))
+
+# Соединительные отрезки (каждый 20-й)
+for i in range(0, len(z_vals), 20):
+    Rz = traj.R(z_vals[i])
+    Pz = line_3d[i]
+    fig.add_trace(go.Scatter3d(x=[Rz[0], Pz[0]], y=[Rz[1], Pz[1]], z=[Rz[2], Pz[2]],
+                               mode='lines', line=dict(color='gray', width=1, dash='dot'), showlegend=False))
+
+fig.update_layout(title='Восстановление линии укладки (экватор)',
+                  scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z', aspectmode='data'),
+                  width=1000, height=800)
+fig.show()

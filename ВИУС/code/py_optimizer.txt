@@ -1,0 +1,390 @@
+# %% [code] {"execution":{"iopub.status.busy":"2025-04-04T19:07:07.248254Z","iopub.execute_input":"2025-04-04T19:07:07.248497Z","iopub.status.idle":"2025-04-04T19:07:07.754897Z","shell.execute_reply.started":"2025-04-04T19:07:07.248472Z","shell.execute_reply":"2025-04-04T19:07:07.753998Z"},"jupyter":{"outputs_hidden":false}}
+# This Python 3 environment comes with many helpful analytics libraries installed
+# It is defined by the kaggle/python Docker image: https://github.com/kaggle/docker-python
+# For example, here's several helpful packages to load
+
+import numpy as np # linear algebra
+import pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv)
+
+# Input data files are available in the read-only "../input/" directory
+# For example, running this (by clicking run or pressing Shift+Enter) will list all files under the input directory
+
+import os
+for dirname, _, filenames in os.walk('/kaggle/input'):
+    for filename in filenames:
+        print(os.path.join(dirname, filename))
+
+# You can write up to 20GB to the current directory (/kaggle/working/) that gets preserved as output when you create a version using "Save & Run All" 
+# You can also write temporary files to /kaggle/temp/, but they won't be saved outside of the current session
+
+# %% [code] {"execution":{"iopub.status.busy":"2025-04-04T19:07:07.755955Z","iopub.execute_input":"2025-04-04T19:07:07.756447Z","iopub.status.idle":"2025-04-04T19:07:23.514163Z","shell.execute_reply.started":"2025-04-04T19:07:07.756411Z","shell.execute_reply":"2025-04-04T19:07:23.513096Z"},"jupyter":{"outputs_hidden":false}}
+import tensorflow as tf
+
+# Сброс любых предыдущих состояний
+tf.keras.backend.clear_session()
+tf.compat.v1.reset_default_graph()
+
+# Теперь можно настраивать GPU
+gpus = tf.config.list_physical_devices('GPU')
+if gpus:
+    try:
+        tf.config.experimental.set_memory_growth(gpus[0], True)
+    except RuntimeError as e:
+        print("Не удалось настроить GPU:", e)
+
+# %% [code] {"execution":{"iopub.status.busy":"2025-04-04T19:07:23.515217Z","iopub.execute_input":"2025-04-04T19:07:23.516016Z","iopub.status.idle":"2025-04-04T19:07:23.526959Z","shell.execute_reply.started":"2025-04-04T19:07:23.515942Z","shell.execute_reply":"2025-04-04T19:07:23.525711Z"},"jupyter":{"outputs_hidden":false}}
+import tensorflow as tf
+import numpy as np
+from math import pi
+
+
+def ackley_loss(y_true, y_pred):
+    """Функция Экли (Ackley)"""
+    y_pred = -2 + 4 * y_pred  # Масштабирование в [-5, 10]
+    n = tf.cast(tf.shape(y_pred)[1], tf.float32)
+    sum_sq = tf.reduce_sum(y_pred**2, axis=1) / n
+    sum_cos = tf.reduce_sum(tf.cos(2 * pi * y_pred), axis=1) / n
+    return -20 * tf.exp(-0.2 * tf.sqrt(sum_sq)) - tf.exp(sum_cos) + 20 + tf.exp(1.0)
+
+def rastrigin_loss(y_true, y_pred):
+    """Функция Растригина (Rastrigin)"""
+    y_pred = -1 + 2 * y_pred  # Масштабирование в [-2.5, 2.5]
+    n = tf.cast(tf.shape(y_pred)[1], tf.float32)
+    return 10 * n + tf.reduce_sum(y_pred**2 - 10 * tf.cos(2 * pi * y_pred), axis=1)
+
+def levy_loss(y_true, y_pred):
+    """Функция Леви (Levy)"""
+    y_pred = -3 + 6 * y_pred  # Масштабирование в [-5, 5]
+    w = 1 + (y_pred - 1) / 4
+    term1 = tf.sin(pi * w[:, 0])**2
+    term2 = tf.reduce_sum((w[:, :-1] - 1)**2 * (1 + 10 * tf.sin(pi * w[:, :-1] + 1)**2), axis=1)
+    term3 = (w[:, -1] - 1)**2 * (1 + tf.sin(2 * pi * w[:, -1])**2)
+    return term1 + term2 + term3
+    
+def rosenbrock_loss(y_true, y_pred):
+    y_pred=-3+6*y_pred
+    """Функция Розенброка с ограничением градиентов."""
+    y1 = y_pred[:, :-1]
+    y2 = y_pred[:, 1:]
+    loss = tf.reduce_sum(100.0 * (y2 - y1**2)**2 + (1.0 - y1)**2, axis=1)
+    return loss
+
+# %% [code] {"execution":{"iopub.status.busy":"2025-04-04T19:07:23.528955Z","iopub.execute_input":"2025-04-04T19:07:23.529248Z","iopub.status.idle":"2025-04-04T21:58:34.477408Z","shell.execute_reply.started":"2025-04-04T19:07:23.529223Z","shell.execute_reply":"2025-04-04T21:58:34.476153Z"},"jupyter":{"outputs_hidden":false}}
+import tensorflow as tf
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
+from tqdm import tqdm
+import os
+import json
+from typing import List, Dict, Any
+
+# Конфигурация эксперимента
+CONFIG = {
+    'input_dim': 40,
+    'n_runs': 100,
+    'n_cycles': 10,
+    'epochs_per_cycle': 100,
+    'batch_size': 32,
+    'output_dir': 'experiment_results_rosenbrock',
+    'seed': 42
+}
+
+os.makedirs(CONFIG['output_dir'], exist_ok=True)
+
+def set_seeds(seed: int) -> None:
+    """Фиксация случайных начальных значений"""
+    tf.random.set_seed(seed)
+    np.random.seed(seed)
+
+def convert_to_serializable(obj: Any) -> Any:
+    """Рекурсивно преобразует объекты в сериализуемые типы"""
+    if isinstance(obj, (np.ndarray, np.generic)):
+        return obj.tolist()
+    elif isinstance(obj, (float, np.float32, np.float64)):
+        return float(obj)
+    elif isinstance(obj, (int, np.int32, np.int64)):
+        return int(obj)
+    elif isinstance(obj, dict):
+        return {k: convert_to_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_to_serializable(v) for v in obj]
+    return obj
+
+# def modified_rosenbrock_loss(y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
+#     """Модифицированная функция Розенброка"""
+#     y_pred = -3 + 6 * y_pred
+#     y1 = y_pred[:, :-1]
+#     y2 = y_pred[:, 1:]
+#     return tf.reduce_sum(100.0 * (y2 - y1**2)**2 + (1.0 - y1)**2, axis=1)
+
+class GradientProcessingLayer(tf.keras.layers.Layer):
+    def __init__(self, kernel_size: int, **kwargs):
+        super().__init__(**kwargs)
+        self.kernel_size = kernel_size
+        self.conv = tf.keras.layers.Conv1D(
+            1, kernel_size, padding='same', 
+            kernel_initializer='zeros', use_bias=True)
+
+    def call(self, inputs: tf.Tensor) -> tf.Tensor:
+        """Основная логика обработки градиентов"""
+        x = tf.convert_to_tensor(inputs)
+        with tf.GradientTape() as tape:
+            tape.watch(x)
+            loss = rosenbrock_loss(x, x)
+        grad = tape.gradient(loss, x)
+        grad = tf.clip_by_norm(grad, 10.0)
+        
+        grad_exp = tf.expand_dims(grad, -1)
+        conv = self.conv(grad_exp)
+        conv = tf.squeeze(conv, -1)
+        
+        return tf.keras.activations.sigmoid(x + conv)
+
+def build_model(input_dim: int) -> tf.keras.Model:
+    """Строит модель для оптимизации"""
+    inputs = tf.keras.Input(shape=(input_dim,))
+    
+    # Создание слоев с разными размерами ядер
+    block1 = GradientProcessingLayer(2)
+    block2 = GradientProcessingLayer(4)
+    block3 = GradientProcessingLayer(8)
+    
+    # Архитектура модели
+    x1 = block1(inputs)
+    x2 = block2(inputs)
+    x_avg = tf.keras.layers.Average()([x1, x2])
+    x_avg = tf.keras.activations.sigmoid(x_avg)
+    outputs = block3(x_avg)
+    
+    model = tf.keras.Model(inputs, outputs)
+    model.compile(optimizer=tf.keras.optimizers.Adam(1e-4), 
+                loss=rosenbrock_loss)
+    return model
+
+def run_single_experiment(run_id: int) -> Dict[str, Any]:
+    """Выполняет один полный прогон эксперимента"""
+    set_seeds(CONFIG['seed'] + run_id)
+    model = build_model(CONFIG['input_dim'])
+    x_init = tf.random.uniform((1000, CONFIG['input_dim']), minval=0, maxval=1)
+    
+    run_data = {
+        'run_id': run_id,
+        'cycles': [],
+        'final_loss': None,
+        'convergence_epoch': None
+    }
+    
+    for cycle in range(CONFIG['n_cycles']):
+        # Обучение модели
+        history = model.fit(
+            x_init, x_init,
+            epochs=CONFIG['epochs_per_cycle'],
+            batch_size=CONFIG['batch_size'],
+            verbose=0
+        )
+        
+        # Расчет градиента
+        x_tensor = tf.convert_to_tensor(x_init)
+        with tf.GradientTape() as tape:
+            tape.watch(x_tensor)
+            loss = rosenbrock_loss(x_tensor, x_tensor)
+        grad = tape.gradient(loss, x_tensor)
+        grad_norm = float(tf.norm(grad).numpy())
+        
+        # Сохранение данных цикла
+        cycle_data = {
+            'cycle': cycle,
+            'loss': [float(l) for l in history.history['loss']],
+            'grad_norm': grad_norm
+        }
+        run_data['cycles'].append(cycle_data)
+        
+        # Обновление данных для следующего цикла
+        x_init = model.predict(x_init, verbose=0)
+    
+    # Анализ сходимости
+    losses = np.concatenate([c['loss'] for c in run_data['cycles']])
+    run_data['final_loss'] = float(np.min(losses))
+    run_data['convergence_epoch'] = int(np.argmin(losses))
+    
+    # Сериализация данных
+    serializable_data = convert_to_serializable(run_data)
+    with open(f"{CONFIG['output_dir']}/run_{run_id}.json", 'w') as f:
+        json.dump(serializable_data, f, indent=2)
+    
+    return run_data
+
+
+def analyze_results(all_runs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Анализирует и визуализирует результаты всех прогонов"""
+    # Подготовка данных для анализа
+    dfs = []
+    final_losses = []
+    all_cycle_losses = []
+    
+    for run in all_runs:
+        run_losses = []
+        for cycle_idx, cycle in enumerate(run['cycles']):
+            for epoch_idx, loss in enumerate(cycle['loss']):
+                dfs.append(pd.DataFrame({
+                    'run': run['run_id'],
+                    'cycle': cycle_idx,
+                    'epoch': epoch_idx,
+                    'loss': loss,
+                    'grad_norm': cycle['grad_norm']
+                }, index=[0]))
+                run_losses.append(loss)
+        
+        final_losses.append(run['final_loss'])
+        all_cycle_losses.extend(run_losses)
+    
+    full_df = pd.concat(dfs, ignore_index=True)
+    
+    # Визуализация результатов
+    plt.figure(figsize=(18, 12))
+    
+    # График 1: Динамика потерь
+    plt.subplot(2, 3, 1)
+    sns.lineplot(data=full_df, x='epoch', y='loss', errorbar=('ci', 95))
+    plt.title('Средние потери с 95% доверительным интервалом')
+    plt.yscale('log')
+    
+    # График 2: Финальные потери
+    plt.subplot(2, 3, 2)
+    sns.boxplot(x=final_losses)
+    plt.title('Распределение финальных потерь')
+    plt.xscale('log')
+    
+    # График 3: Эпохи сходимости
+    plt.subplot(2, 3, 3)
+    convergence_epochs = [r['convergence_epoch'] for r in all_runs]
+    sns.histplot(convergence_epochs, bins=20, kde=True)
+    plt.title('Распределение эпох сходимости')
+    
+    # График 4: Корреляция метрик
+    plt.subplot(2, 3, 4)
+    corr = full_df[['loss', 'grad_norm']].corr()
+    sns.heatmap(corr, annot=True, cmap='coolwarm', vmin=-1, vmax=1)
+    plt.title('Корреляция между loss и grad_norm')
+    
+    # График 5: Гистограмма всех значений потерь
+    plt.subplot(2, 3, 5)
+    sns.histplot(all_cycle_losses, bins=50, kde=True, log_scale=(True, False))
+    plt.title('Гистограмма всех значений потерь')
+    plt.xlabel('Значение функции потерь (log scale)')
+    plt.ylabel('Частота')
+    
+    # График 6: Гистограмма финальных потерь
+    plt.subplot(2, 3, 6)
+    sns.histplot(final_losses, bins=20, kde=True, log_scale=(True, False))
+    plt.title('Гистограмма финальных потерь')
+    plt.xlabel('Финальное значение потерь (log scale)')
+    plt.ylabel('Частота')
+    
+    plt.tight_layout()
+    plt.savefig(f"{CONFIG['output_dir']}/summary_plot.png", dpi=300)
+    plt.close()
+    
+    # Генерация отчета
+    report = {
+        'total_runs': len(all_runs),
+        'mean_final_loss': float(np.mean(final_losses)),
+        'std_final_loss': float(np.std(final_losses)),
+        'median_final_loss': float(np.median(final_losses)),
+        'mean_convergence_epoch': float(np.mean(convergence_epochs)),
+        'min_loss': float(np.min(final_losses)),
+        'max_loss': float(np.max(final_losses)),
+        'success_rate': float(np.mean(np.array(final_losses) < 1e-3)),
+        'loss_distribution': {
+            'all_losses_stats': {
+                'mean': float(np.mean(all_cycle_losses)),
+                'std': float(np.std(all_cycle_losses)),
+                'percentiles': {
+                    '5%': float(np.percentile(all_cycle_losses, 5)),
+                    '25%': float(np.percentile(all_cycle_losses, 25)),
+                    '50%': float(np.percentile(all_cycle_losses, 50)),
+                    '75%': float(np.percentile(all_cycle_losses, 75)),
+                    '95%': float(np.percentile(all_cycle_losses, 95))
+                }
+            },
+            'final_losses_stats': {
+                'mean': float(np.mean(final_losses)),
+                'std': float(np.std(final_losses)),
+                'percentiles': {
+                    '5%': float(np.percentile(final_losses, 5)),
+                    '25%': float(np.percentile(final_losses, 25)),
+                    '50%': float(np.percentile(final_losses, 50)),
+                    '75%': float(np.percentile(final_losses, 75)),
+                    '95%': float(np.percentile(final_losses, 95))
+                }
+            }
+        }
+    }
+    
+    with open(f"{CONFIG['output_dir']}/summary_report.json", 'w') as f:
+        json.dump(convert_to_serializable(report), f, indent=2)
+    
+    return report
+
+def main() -> None:
+    """Основная функция выполнения экспериментов"""
+    all_results = []
+    
+    for run_id in tqdm(range(CONFIG['n_runs']), desc="Выполнение экспериментов"):
+        try:
+            result = run_single_experiment(run_id)
+            all_results.append(result)
+            print(f"Прогон {run_id} завершен. Final loss: {result['final_loss']:.4e}")
+        except Exception as e:
+            print(f"Ошибка в прогоне {run_id}: {str(e)}")
+    
+    if all_results:
+        report = analyze_results(all_results)
+        print("\nИтоговый отчет:")
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+    else:
+        print("Все прогоны завершились с ошибкой")
+
+if __name__ == "__main__":
+    main()
+
+# %% [code] {"execution":{"iopub.status.busy":"2025-04-04T21:58:34.478922Z","iopub.execute_input":"2025-04-04T21:58:34.479505Z","iopub.status.idle":"2025-04-04T21:58:34.655246Z","shell.execute_reply.started":"2025-04-04T21:58:34.479476Z","shell.execute_reply":"2025-04-04T21:58:34.654142Z"},"jupyter":{"outputs_hidden":false}}
+import datetime
+import shutil
+import datetime
+def create_results_archive():
+    """Создает zip-архив с результатами эксперимента"""
+    try:
+        # Создаем уникальное имя архива с timestamp
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        archive_name = f"experiment_results_{timestamp}"
+        
+        # Вариант 1: создаем архив в текущей директории
+        shutil.make_archive(archive_name, 'zip', CONFIG['output_dir'])
+        
+        # Вариант 2: создаем архив прямо в папке результатов (раскомментируйте если нужно)
+        # archive_path = os.path.join(CONFIG['output_dir'], archive_name)
+        # shutil.make_archive(archive_path, 'zip', CONFIG['output_dir'])
+        
+        print(f"\nАрхив с результатами создан: {archive_name}.zip")
+        return f"{archive_name}.zip"
+    except Exception as e:
+        print(f"Ошибка при создании архива: {str(e)}")
+        return None
+archive_path = create_results_archive()
+# # Модифицируем конец функции main():
+# if all_results:
+#     report = analyze_results(all_results)
+#     print("\nИтоговый отчет:")
+#     print(json.dumps(report, indent=2, ensure_ascii=False))
+    
+#     # Создаем архив
+#     archive_path = create_results_archive()
+    
+#     # Дополнительно: можно добавить информацию об архиве в отчет
+#     if archive_path:
+#         report['archive_path'] = archive_path
+#         with open(f"{CONFIG['output_dir']}/summary_report.json", 'w') as f:
+#             json.dump(convert_to_serializable(report), f, indent=2)
