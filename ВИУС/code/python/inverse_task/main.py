@@ -14,9 +14,9 @@ import plotly.graph_objects as go
 from geometry.ellipsoid import EllipsoidWithDerivatives
 from core.trajectory import Trajectory
 # from trajectory import register_builders  # регистрирует кубический сплайн
-from winding.rhs_calculator import RightHandSideCalculator
-from winding.scipy_solver import SciPySolver
-from winding.winding_builder import WindingLineBuilder
+from inverse_winding.rhs_calculator import RightHandSideCalculator
+from solvers.scipy_solver import SciPySolver
+from inverse_winding.inverse_winding_builder import *
 
 # ----------------------------------------------------------------------
 # 1. Генерация геодезической линии на внешнем эллипсоиде E1
@@ -108,10 +108,10 @@ E2 = EllipsoidWithDerivatives(a2, b2, c2)
 u0_geo, v0_geo = 0.0, 0.0               # старт на экваторе (x = a1)
 du0_geo, dv0_geo = 0.0, 1.0             # направление вдоль меридиана?
 # Для наглядности сделаем наклонное направление:
-du0_geo, dv0_geo = 0.6, 0.8
+# du0_geo, dv0_geo = 0.6, 0.8
 
-s_max_geo = 15.0  # длина геодезической
-num_geo_points = 600
+s_max_geo = 20.0  # длина геодезической
+num_geo_points = 200
 
 print("Генерация геодезической траектории на E1...")
 geo_points = generate_geodesic_trajectory(E1, u0_geo, v0_geo,
@@ -144,7 +144,9 @@ solver = SciPySolver(method='DOP853', rtol=1e-8, atol=1e-10)
 # ----------------------------------------------------------------------
 # 5. Строитель линии укладки и запуск расчёта
 # ----------------------------------------------------------------------
-builder = WindingLineBuilder(E2, traj, rhs_calc, solver)
+builder = InvWindingLineBuilder(E2, traj, rhs_calc, solver)
+# 2. Оборачиваем его в адаптер
+builder = InverseWindingLineBuilder(builder)
 
 # Начальная точка на оправке (подбирается вручную)
 # Для простоты выберем точку на E2, соответствующую той же долготе/широте,
@@ -156,7 +158,8 @@ v0 = v0_geo
 z_eval = np.linspace(0, traj.total_length, 400)
 
 print("Расчёт линии укладки на E2...")
-z_vals, line_3d = builder.compute(u0, v0, z_eval=z_eval)
+z_vals, line_3d = builder.build(initial_point=(u0, v0),
+    eval_points=z_eval)
 uv_states = builder.get_uv_states()
 print(f"Рассчитано {len(z_vals)} точек линии укладки.")
 

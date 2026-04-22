@@ -3,11 +3,12 @@ import numpy as np
 from typing import Optional, Tuple
 from geometry.tsurfaces import AnalyticalSurface
 from core.trajectory import Trajectory
-from winding.rhs_calculator import RightHandSideCalculator
-from winding.base_solver import ODESolver
+from inverse_winding.rhs_calculator import RightHandSideCalculator
+from solvers.base_solver import ODESolver
+from winding.winding_base import WindingLineBuilderBase
 
 
-class WindingLineBuilder:
+class InvWindingLineBuilder:
     """
     Построитель линии укладки на поверхности оправки.
 
@@ -131,3 +132,37 @@ class WindingLineBuilder:
     def get_3d_points(self) -> Optional[np.ndarray]:
         """Возвращает 3D-точки линии укладки."""
         return self._points_3d
+
+ #Целевой класс как адаптер между классом InvWindingLineBuilder и интерфейсом WindingLineBuilderBase
+class InverseWindingLineBuilder(WindingLineBuilderBase):
+    def __init__(self, inverse_builder: InvWindingLineBuilder):
+        self._builder = inverse_builder
+        self._last_success = False
+
+    def build(self, initial_point, initial_tangent=None, end_param=None,
+              eval_points=None, **kwargs):
+        u0, v0 = initial_point
+        if initial_tangent is not None:
+            # В обратной задаче начальное направление определяется траекторией,
+            # можно либо игнорировать, либо выдавать предупреждение
+            pass
+        z_vals, points = self._builder.compute(
+            u0, v0, z_end=end_param, z_eval=eval_points, **kwargs
+        )
+        self._last_success = True
+        return z_vals, points
+
+    def get_uv_states(self):
+        return self._builder.get_uv_states()
+
+    def get_tangents(self):
+        # Для обратной задачи можно вычислить производные по s из внутренних данных,
+        # либо вернуть None, если не требуется
+        return None
+
+    def get_3d_points(self):
+        return self._builder.get_3d_points()
+
+    @property
+    def last_run_successful(self):
+        return self._last_success

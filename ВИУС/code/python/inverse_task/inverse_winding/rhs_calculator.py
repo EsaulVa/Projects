@@ -92,6 +92,7 @@ class RightHandSideCalculator:
 
         # 6. Коэффициент α = 1 / √(1 - δ²)
         alpha = 1.0 / np.sqrt(max(self.eps, 1.0 - delta * delta))
+        # alpha=1
 
         # 7. Первая квадратичная форма E, F, G
         E, F, G = self.surface.first_fundamental_form(u, v)
