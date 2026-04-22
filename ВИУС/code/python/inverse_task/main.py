@@ -111,7 +111,7 @@ du0_geo, dv0_geo = 0.0, 1.0             # направление вдоль ме
 # du0_geo, dv0_geo = 0.6, 0.8
 
 s_max_geo = 20.0  # длина геодезической
-num_geo_points = 200
+num_geo_points = 20
 
 print("Генерация геодезической траектории на E1...")
 geo_points = generate_geodesic_trajectory(E1, u0_geo, v0_geo,

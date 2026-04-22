@@ -13,9 +13,9 @@ import plotly.graph_objects as go
 from geometry.ellipsoid import EllipsoidWithDerivatives
 from core.trajectory import Trajectory
 # from trajectory import register_builders  # регистрирует кубический сплайн
-from winding.rhs_calculator import RightHandSideCalculator
-from winding.scipy_solver import SciPySolver
-from winding.winding_builder import WindingLineBuilder
+from inverse_winding.rhs_calculator import RightHandSideCalculator
+from solvers.scipy_solver import SciPySolver
+from inverse_winding.inverse_winding_builder import WindingLineBuilder
 
 """
 Контрольный пример: меридиан на эллипсоидах.

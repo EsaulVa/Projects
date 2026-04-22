@@ -5,7 +5,7 @@ from geometry.tsurfaces import AnalyticalSurface
 from core.trajectory import Trajectory
 from inverse_winding.rhs_calculator import RightHandSideCalculator
 from solvers.base_solver import ODESolver
-from winding.winding_base import WindingLineBuilderBase
+from winding.winding_base import WindingLineBuilderBase, WindingResultProvider
 
 
 class InvWindingLineBuilder:
@@ -134,7 +134,7 @@ class InvWindingLineBuilder:
         return self._points_3d
 
  #Целевой класс как адаптер между классом InvWindingLineBuilder и интерфейсом WindingLineBuilderBase
-class InverseWindingLineBuilder(WindingLineBuilderBase):
+class InverseWindingLineBuilder(WindingLineBuilderBase,WindingResultProvider):
     def __init__(self, inverse_builder: InvWindingLineBuilder):
         self._builder = inverse_builder
         self._last_success = False

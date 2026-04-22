@@ -61,7 +61,17 @@ class SurfaceBase(abc.ABC):
         Gamma = Gamma.at[1, 1, 1].set(0.5 * (g12 * (2.0 * F_v - G_u) + g22 * G_v))
         
         return Gamma
-
+    
+    def christoffel_symbols(self, u: float, v: float):
+        """Символы Кристоффеля второго рода в точке (u, v)."""
+        E, F, G = self.first_fundamental_form(u, v)
+        # Предполагаем, что у наследников есть метод metric_derivatives
+        if hasattr(self, 'metric_derivatives'):
+            E_u, E_v, F_u, F_v, G_u, G_v = self.metric_derivatives(u, v)
+        else:
+            # Если производные не предоставлены, можно вычислить численно (JAX) или вызвать исключение
+            raise NotImplementedError("Поверхность должна предоставлять metric_derivatives")
+        return self.compute_christoffel_symbols(E, F, G, E_u, E_v, F_u, F_v, G_u, G_v)
     # @staticmethod
     # def compute_christoffel_symbols(E, F, G, E_u, E_v, F_u, F_v, G_u, G_v):
     #     det = E * G - F**2
@@ -328,5 +338,13 @@ class EllipsoidAnalytical(SurfaceBase):
         G_v = 2 * sin_v * cos_v * (a**2 * cos_u**2 + b**2 * sin_u**2 - c**2)
         
         return E_u, E_v, F_u, F_v, G_u, G_v
+    
+    def position(self, u, v):
+        a, b, c = self.a, self.b, self.c
+        return jnp.array([
+            a * jnp.cos(u) * jnp.cos(v),
+            b * jnp.sin(u) * jnp.cos(v),
+            c * jnp.sin(v)
+        ])
 
 # Расширенный интерфейс поверхностей
