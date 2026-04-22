@@ -1,0 +1,1175 @@
+classdef QuinticSpline < handle
+    %QUINTICSPLINE Базовый класс для квинтических сплайнов
+    
+    properties
+        x           % Узлы сетки
+        y           % Значения в узлах
+        n           % Количество узлов
+        bc_left     % Граничные условия слева
+        bc_right    % Граничные условия справа
+        m           % Первые производные в узлах
+        M           % Вторые производные в узлах
+        segments_coeffs % Коэффициенты сегментов
+    end
+    
+    methods
+        function obj = QuinticSpline(x, y, bc_left, bc_right)
+            % Конструктор класса
+            obj.x = x(:);
+            obj.y = y(:);
+            obj.n = length(x);
+            obj.bc_left = bc_left;
+            obj.bc_right = bc_right;
+            obj.m = zeros(obj.n, 1);
+            obj.M = zeros(obj.n, 1);
+            obj.segments_coeffs = cell(obj.n-1, 1);
+        end
+        
+        function coeffs = getSegmentCoeffs(obj, i, y_all, m_all, M_all)
+            % Вычисляет коэффициенты a3, a4, a5 для отрезка i
+            h = obj.x(i+1) - obj.x(i);
+            yi = y_all(i);
+            yip1 = y_all(i+1);
+            mi = m_all(i);
+            mip1 = m_all(i+1);
+            Mi = M_all(i);
+            Mip1 = M_all(i+1);
+            
+            B1 = yip1 - (yi + mi*h + 0.5*Mi*h^2);
+            B2 = mip1 - (mi + Mi*h);
+            B3 = Mip1 - Mi;
+            
+            A = [h^3, h^4, h^5;
+                 3*h^2, 4*h^3, 5*h^4;
+                 6*h, 12*h^2, 20*h^3];
+            
+            B = [B1; B2; B3];
+            
+            coeffs = A \ B;
+        end
+    end
+end
+
+classdef SmoothingQuinticSpline < QuinticSpline
+    %SMOOTHINGQUINTICSPLINE Сглаживающий квинтический сплайн
+    
+    properties
+        y_data      % Исходные данные
+        alpha       % Параметр сглаживания
+        v           % Оптимизированные значения в узлах
+    end
+    
+    methods
+        function obj = SmoothingQuinticSpline(x, y_data, bc_left, bc_right)
+            % Конструктор
+            obj = obj@QuinticSpline(x, y_data, bc_left, bc_right);
+            obj.y_data = y_data(:);
+        end
+        
+        function J = objective(obj, vars_opt, alpha)
+            % Целевая функция для оптимизации
+            n = obj.n;
+            
+            % Распаковка переменных
+            v = vars_opt(1:n);
+            m_internal = vars_opt(n+1:n+(n-2));
+            M_internal = vars_opt(n+(n-2)+1:end);
+            
+            % Сборка полных массивов
+            m = zeros(n, 1);
+            M = zeros(n, 1);
+            
+            % Граничные условия
+            m(1) = obj.bc_left.m;
+            M(1) = obj.bc_left.M;
+            m(end) = obj.bc_right.m;
+            M(end) = obj.bc_right.M;
+            
+            % Внутренние узлы
+            m(2:end-1) = m_internal;
+            M(2:end-1) = M_internal;
+            
+            % Штраф за отклонение от данных
+            fidelity_term = sum((v - obj.y_data).^2);
+            
+            % Энергия изгиба
+            smoothness_term = 0;
+            
+            for i = 1:n-1
+                coeffs = obj.getSegmentCoeffs(i, v, m, M);
+                a3 = coeffs(1); a4 = coeffs(2); a5 = coeffs(3);
+                h = obj.x(i+1) - obj.x(i);
+                
+                % Интеграл квадрата второй производной
+                fun = @(t) (M(i) + 6*a3*t + 12*a4*t.^2 + 20*a5*t.^3).^2;
+                integral_val = integral(fun, 0, h);
+                smoothness_term = smoothness_term + integral_val;
+            end
+            
+            J = alpha * fidelity_term + (1 - alpha) * smoothness_term;
+        end
+        
+        function fit(obj, alpha)
+            % Оптимизация сплайна
+            obj.alpha = alpha;
+            n = obj.n;
+            
+            % Начальное приближение
+            v_init = obj.y_data;
+            
+            % Используем кубический сплайн для инициализации производных
+            pp = spline(obj.x, [obj.bc_left.m; obj.y_data; obj.bc_right.m]);
+            pp_der1 = fnder(pp, 1);
+            pp_der2 = fnder(pp, 2);
+            
+            m_init = ppval(pp_der1, obj.x);
+            M_init = ppval(pp_der2, obj.x);
+            
+            % Формируем вектор оптимизации
+            m_opt_vars = m_init(2:end-1);
+            M_opt_vars = M_init(2:end-1);
+            
+            x0 = [v_init; m_opt_vars; M_opt_vars];
+            
+            fprintf('Оптимизация сглаживающего сплайна (alpha=%.3f)...\n', alpha);
+            fprintf('Размер вектора переменных: %d\n', length(x0));
+            
+            % Оптимизация с помощью fminunc
+            options = optimoptions('fminunc', ...
+                'Display', 'iter', ...
+                'Algorithm', 'quasi-newton', ...
+                'MaxIterations', 1000, ...
+                'OptimalityTolerance', 1e-8);
+            
+            objFun = @(x) obj.objective(x, alpha);
+            [x_opt, ~, exitflag] = fminunc(objFun, x0, options);
+            
+            fprintf('Оптимизация завершена. Статус: %d\n', exitflag);
+            
+            % Сохраняем результаты
+            obj.v = x_opt(1:n);
+            
+            obj.m(1) = obj.bc_left.m; obj.m(end) = obj.bc_right.m;
+            obj.M(1) = obj.bc_left.M; obj.M(end) = obj.bc_right.M;
+            
+            obj.m(2:end-1) = x_opt(n+1:n+(n-2));
+            obj.M(2:end-1) = x_opt(n+(n-2)+1:end);
+            
+            % Вычисляем коэффициенты сегментов
+            obj.segments_coeffs = cell(n-1, 1);
+            for i = 1:n-1
+                obj.segments_coeffs{i} = obj.getSegmentCoeffs(i, obj.v, obj.m, obj.M);
+            end
+        end
+        
+        function result = predict(obj, x_eval, der)
+            % Вычисление сплайна или его производных
+            if nargin < 3
+                der = 0;
+            end
+            
+            x_eval = x_eval(:);
+            result = zeros(size(x_eval));
+            
+            for k = 1:length(x_eval)
+                xv = x_eval(k);
+                
+                if xv < obj.x(1) || xv > obj.x(end)
+                    result(k) = NaN;
+                    continue;
+                end
+                
+                % Находим интервал
+                idx = find(obj.x <= xv, 1, 'last');
+                if isempty(idx) || idx < 1
+                    idx = 1;
+                elseif idx > obj.n-1
+                    idx = obj.n-1;
+                end
+                
+                t = xv - obj.x(idx);
+                vi = obj.v(idx);
+                mi = obj.m(idx);
+                Mi = obj.M(idx);
+                coeffs = obj.segments_coeffs{idx};
+                a3 = coeffs(1); a4 = coeffs(2); a5 = coeffs(3);
+                
+                switch der
+                    case 0
+                        val = vi + mi*t + (Mi/2)*t^2 + a3*t^3 + a4*t^4 + a5*t^5;
+                    case 1
+                        val = mi + Mi*t + 3*a3*t^2 + 4*a4*t^3 + 5*a5*t^4;
+                    case 2
+                        val = Mi + 6*a3*t + 12*a4*t^2 + 20*a5*t^3;
+                    otherwise
+                        error('Неподдерживаемый порядок производной');
+                end
+                
+                result(k) = val;
+            end
+        end
+    end
+end
+
+classdef ParametricQuinticSpline < handle
+    %PARAMETRICQUINTICSPLINE Параметрический сглаживающий сплайн
+    
+    properties
+        points          % Исходные точки (N?2)
+        n               % Количество точек
+        u               % Параметр (длина хорды)
+        bc_start        % Граничные условия в начале
+        bc_end          % Граничные условия в конце
+        spline_x        % Сплайн для X координаты
+        spline_y        % Сплайн для Y координаты
+        v_x, v_y        % Оптимизированные значения в узлах
+        m_x, m_y        % Первые производные
+        M_x, M_y        % Вторые производные
+        coeffs_x, coeffs_y % Коэффициенты сегментов
+    end
+    
+    methods
+        function obj = ParametricQuinticSpline(points, bc_start, bc_end)
+            % Конструктор
+            obj.points = points;
+            obj.n = size(points, 1);
+            obj.bc_start = bc_start;
+            obj.bc_end = bc_end;
+            
+            % Хордальная параметризация
+            obj.u = obj.calculateChordParameter(points);
+            
+            % Преобразование граничных условий
+            [bc_x, bc_y] = obj.convertBoundaryConditions();
+            
+            % Создание сплайнов для X и Y
+            obj.spline_x = SmoothingQuinticSpline(obj.u, points(:, 1), ...
+                bc_x{1}, bc_x{2});
+            obj.spline_y = SmoothingQuinticSpline(obj.u, points(:, 2), ...
+                bc_y{1}, bc_y{2});
+        end
+        
+        function u = calculateChordParameter(obj, points)
+            % Вычисление кумулятивной хордальной параметризации
+            diffs = diff(points, 1);
+            dists = sqrt(sum(diffs.^2, 2));
+            u = zeros(size(points, 1), 1);
+            u(2:end) = cumsum(dists);
+        end
+        
+        function [bc_x, bc_y] = convertBoundaryConditions(obj)
+            % Преобразование геометрических граничных условий в производные
+            % Начальные условия
+            T_start = obj.bc_start.direction;
+            kappa_start = obj.bc_start.curvature;
+            
+            T_norm_start = T_start / norm(T_start);
+            N_start = [-T_norm_start(2); T_norm_start(1)];
+            speed_start = 1.0;
+            curvature_vec_start = kappa_start * speed_start^2 * N_start;
+            
+            % Конечные условия
+            T_end = obj.bc_end.direction;
+            kappa_end = obj.bc_end.curvature;
+            
+            T_norm_end = T_end / norm(T_end);
+            N_end = [-T_norm_end(2); T_norm_end(1)];
+            speed_end = 1.0;
+            curvature_vec_end = kappa_end * speed_end^2 * N_end;
+            
+            % Граничные условия для одномерных сплайнов
+            bc_x_start = struct('m', T_norm_start(1)*speed_start, ...
+                'M', curvature_vec_start(1));
+            bc_y_start = struct('m', T_norm_start(2)*speed_start, ...
+                'M', curvature_vec_start(2));
+            
+            bc_x_end = struct('m', T_norm_end(1)*speed_end, ...
+                'M', curvature_vec_end(1));
+            bc_y_end = struct('m', T_norm_end(2)*speed_end, ...
+                'M', curvature_vec_end(2));
+            
+            bc_x = {bc_x_start, bc_x_end};
+            bc_y = {bc_y_start, bc_y_end};
+        end
+        
+        function fit(obj, alpha, alpha_x, alpha_y)
+            % Оптимизация сплайна
+            if nargin < 3
+                alpha_x = alpha;
+            end
+            if nargin < 4
+                alpha_y = alpha;
+            end
+            
+            fprintf('Обучение параметрического сплайна...\n');
+            fprintf('alpha_x=%.3f, alpha_y=%.3f\n', alpha_x, alpha_y);
+            
+            % Обучение сплайнов для X и Y
+            obj.spline_x.fit(alpha_x);
+            obj.spline_y.fit(alpha_y);
+            
+            % Сохраняем результаты
+            obj.v_x = obj.spline_x.v;
+            obj.v_y = obj.spline_y.v;
+            obj.m_x = obj.spline_x.m;
+            obj.m_y = obj.spline_y.m;
+            obj.M_x = obj.spline_x.M;
+            obj.M_y = obj.spline_y.M;
+            
+            obj.coeffs_x = obj.spline_x.segments_coeffs;
+            obj.coeffs_y = obj.spline_y.segments_coeffs;
+        end
+        
+        function result = predict(obj, u_eval, der)
+            % Вычисление кривой или производных
+            if nargin < 3
+                der = 0;
+            end
+            
+            u_eval = u_eval(:);
+            
+            if der == 3
+                % Кривизна
+                result = obj.curvature(u_eval);
+                return;
+            end
+            
+            result = zeros(length(u_eval), 2);
+            
+            for k = 1:length(u_eval)
+                u = u_eval(k);
+                
+                if u < obj.u(1) || u > obj.u(end)
+                    result(k, :) = [NaN, NaN];
+                    continue;
+                end
+                
+                % Находим интервал
+                idx = find(obj.u <= u, 1, 'last');
+                if idx < 1
+                    idx = 1;
+                elseif idx > obj.n-1
+                    idx = obj.n-1;
+                end
+                
+                t = u - obj.u(idx);
+                
+                % X компонента
+                coeffs_x = obj.coeffs_x{idx};
+                a3_x = coeffs_x(1); a4_x = coeffs_x(2); a5_x = coeffs_x(3);
+                
+                switch der
+                    case 0
+                        x_val = obj.v_x(idx) + obj.m_x(idx)*t + ...
+                            0.5*obj.M_x(idx)*t^2 + a3_x*t^3 + a4_x*t^4 + a5_x*t^5;
+                    case 1
+                        x_val = obj.m_x(idx) + obj.M_x(idx)*t + ...
+                            3*a3_x*t^2 + 4*a4_x*t^3 + 5*a5_x*t^4;
+                    case 2
+                        x_val = obj.M_x(idx) + 6*a3_x*t + 12*a4_x*t^2 + 20*a5_x*t^3;
+                end
+                
+                % Y компонента
+                coeffs_y = obj.coeffs_y{idx};
+                a3_y = coeffs_y(1); a4_y = coeffs_y(2); a5_y = coeffs_y(3);
+                
+                switch der
+                    case 0
+                        y_val = obj.v_y(idx) + obj.m_y(idx)*t + ...
+                            0.5*obj.M_y(idx)*t^2 + a3_y*t^3 + a4_y*t^4 + a5_y*t^5;
+                    case 1
+                        y_val = obj.m_y(idx) + obj.M_y(idx)*t + ...
+                            3*a3_y*t^2 + 4*a4_y*t^3 + 5*a5_y*t^4;
+                    case 2
+                        y_val = obj.M_y(idx) + 6*a3_y*t + 12*a4_y*t^2 + 20*a5_y*t^3;
+                end
+                
+                result(k, :) = [x_val, y_val];
+            end
+            
+            % Нормализация касательных векторов
+            if der == 1
+                norms = sqrt(sum(result.^2, 2));
+                norms(norms == 0) = 1;
+                result = result ./ norms;
+            end
+        end
+        
+        function curvature = curvature(obj, u_eval)
+            % Вычисление кривизны
+            u_eval = u_eval(:);
+            curvature = zeros(size(u_eval));
+            
+            for k = 1:length(u_eval)
+                u = u_eval(k);
+                
+                if u < obj.u(1) || u > obj.u(end)
+                    curvature(k) = NaN;
+                    continue;
+                end
+                
+                % Находим интервал
+                idx = find(obj.u <= u, 1, 'last');
+                if idx < 1
+                    idx = 1;
+                elseif idx > obj.n-1
+                    idx = obj.n-1;
+                end
+                
+                t = u - obj.u(idx);
+                
+                % Первые производные
+                coeffs_x = obj.coeffs_x{idx};
+                a3_x = coeffs_x(1); a4_x = coeffs_x(2); a5_x = coeffs_x(3);
+                xp = obj.m_x(idx) + obj.M_x(idx)*t + ...
+                    3*a3_x*t^2 + 4*a4_x*t^3 + 5*a5_x*t^4;
+                
+                coeffs_y = obj.coeffs_y{idx};
+                a3_y = coeffs_y(1); a4_y = coeffs_y(2); a5_y = coeffs_y(3);
+                yp = obj.m_y(idx) + obj.M_y(idx)*t + ...
+                    3*a3_y*t^2 + 4*a4_y*t^3 + 5*a5_y*t^4;
+                
+                % Вторые производные
+                xpp = obj.M_x(idx) + 6*a3_x*t + 12*a4_x*t^2 + 20*a5_x*t^3;
+                ypp = obj.M_y(idx) + 6*a3_y*t + 12*a4_y*t^2 + 20*a5_y*t^3;
+                
+                % Кривизна
+                numerator = xp*ypp - yp*xpp;
+                denominator = (xp^2 + yp^2)^1.5;
+                
+                if denominator ~= 0
+                    curvature(k) = numerator / denominator;
+                end
+            end
+        end
+        
+        function L = length(obj, n_samples)
+            % Оценка длины кривой
+            if nargin < 2
+                n_samples = 1000;
+            end
+            
+            u_fine = linspace(obj.u(1), obj.u(end), n_samples)';
+            points = obj.predict(u_fine, 0);
+            diffs = diff(points, 1);
+            L = sum(sqrt(sum(diffs.^2, 2)));
+        end
+    end
+end
+
+%% Основной скрипт для тестирования параметрических сплайнов
+
+clear all; close all; clc;
+
+%% Генерация данных (зашумленная полуокружность)
+rng(10);
+n_points = 30;
+r = 5.0;
+theta = linspace(0, pi, n_points)';
+
+% Истинная окружность
+clean_x = r * cos(theta);
+clean_y = r * sin(theta);
+
+% Зашумленные данные
+noise_std = 0.001;
+points_noisy = [clean_x + noise_std*randn(n_points, 1), ...
+                clean_y + noise_std*randn(n_points, 1)];
+
+%% Граничные условия
+bc_start = struct('direction', [0.0, 1.0], 'curvature', 1.0/r);
+bc_end = struct('direction', [0.0, -1.0], 'curvature', 1.0/r);
+
+%% Создание и обучение сплайнов
+spline = ParametricQuinticSpline(points_noisy, bc_start, bc_end);
+
+% Тестируем разные уровни сглаживания
+alphas = [0.99, 0.95, 0.9];
+results = cell(length(alphas), 1);
+
+for i = 1:length(alphas)
+    fprintf('\n=== alpha = %.3f ===\n', alphas(i));
+    spline_temp = ParametricQuinticSpline(points_noisy, bc_start, bc_end);
+    spline_temp.fit(alphas(i));
+    results{i} = spline_temp;
+end
+
+% Основной сплайн
+spline.fit(0.95);
+
+%% Данные для графиков
+u_dense = linspace(0, spline.u(end), 300)';
+curve_pts = spline.predict(u_dense, 0);
+tangents = spline.predict(u_dense, 1);
+second_derivs = spline.predict(u_dense, 2);
+curvature_vals = spline.curvature(u_dense);
+
+%% Визуализация
+figure('Position', [100, 100, 1400, 900]);
+
+% 1. Кривая в пространстве
+subplot(3, 2, 1);
+plot(points_noisy(:, 1), points_noisy(:, 2), 'ro', ...
+    'MarkerSize', 6, 'MarkerFaceColor', 'r', 'MarkerEdgeColor', 'r', ...
+    'DisplayName', 'Зашумленные узлы');
+hold on;
+plot(clean_x, clean_y, 'k--', 'LineWidth', 1.5, 'DisplayName', 'Истинная окружность');
+
+% Рисуем разные уровни сглаживания
+colors = ['b', 'g', 'm'];
+for i = 1:length(alphas)
+    curve_temp = results{i}.predict(u_dense, 0);
+    plot(curve_temp(:, 1), curve_temp(:, 2), colors(i), ...
+        'LineWidth', 1.5, 'DisplayName', sprintf('?=%.2f', alphas(i)));
+end
+
+title('Параметрическая кривая (XY плоскость)');
+axis equal; grid on; legend('Location', 'best');
+
+% 2. Касательные векторы (фрагмент)
+subplot(3, 2, 2);
+mask = (u_dense > spline.u(end)*0.4) & (u_dense < spline.u(end)*0.6);
+u_segment = u_dense(mask);
+curve_segment = curve_pts(mask, :);
+tangents_segment = tangents(mask, :);
+
+plot(curve_segment(:, 1), curve_segment(:, 2), 'b-', 'LineWidth', 2);
+hold on;
+
+step = max(1, floor(length(u_segment)/10));
+quiver(curve_segment(1:step:end, 1), curve_segment(1:step:end, 2), ...
+       tangents_segment(1:step:end, 1), tangents_segment(1:step:end, 2), ...
+       0.5, 'g', 'LineWidth', 1, 'MaxHeadSize', 0.5);
+
+title('Касательные векторы (фрагмент)');
+axis equal; grid on;
+
+% 3. Первая производная
+subplot(3, 2, 3);
+plot(u_dense, tangents(:, 1), 'b-', 'LineWidth', 1.5, 'DisplayName', '$$\dot{x}(u)$$');
+hold on;
+plot(u_dense, tangents(:, 2), 'r-', 'LineWidth', 1.5, 'DisplayName', '$$\dot{y}(u)$$');
+yline(0, 'k--', 'Alpha', 0.3);
+title('Первая производная (нормализованные компоненты)');
+xlabel('Параметр u'); ylabel('Значение');
+legend('Interpreter', 'latex'); grid on;
+ylim([-1.5, 1.5]);
+
+% 4. Вторая производная
+subplot(3, 2, 4);
+plot(u_dense, second_derivs(:, 1), 'b-', 'LineWidth', 1.5, 'DisplayName', '$$\ddot{x}(u)$$');
+hold on;
+plot(u_dense, second_derivs(:, 2), 'r-', 'LineWidth', 1.5, 'DisplayName', '$$\ddot{y}(u)$$');
+yline(0, 'k--', 'Alpha', 0.3);
+title('Вторая производная (компоненты)');
+xlabel('Параметр u'); ylabel('Значение');
+legend('Interpreter', 'latex'); grid on;
+
+% 5. Кривизна
+subplot(3, 2, 5);
+plot(u_dense, curvature_vals, 'b-', 'LineWidth', 2, 'DisplayName', 'Кривизна сплайна');
+hold on;
+yline(1/r, 'r--', 'LineWidth', 1.5, 'DisplayName', sprintf('Истинная кривизна (1/r=%.3f)', 1/r));
+title('Кривизна кривой');
+xlabel('Параметр u'); ylabel('?');
+legend('Location', 'best'); grid on;
+
+% 6. Отклонение от истинной кривой
+subplot(3, 2, 6);
+theta_interp = interp1(spline.u, theta, u_dense);
+true_curve = [r * cos(theta_interp), r * sin(theta_interp)];
+deviation = sqrt(sum((curve_pts - true_curve).^2, 2));
+
+plot(u_dense, deviation, 'r-', 'LineWidth', 2);
+hold on;
+fill([u_dense; flipud(u_dense)], [zeros(size(deviation)); flipud(deviation)], ...
+    'r', 'FaceAlpha', 0.3, 'EdgeColor', 'none');
+
+title('Отклонение от истинной кривой');
+xlabel('Параметр u'); ylabel('Отклонение');
+grid on;
+
+%% Вывод информации
+fprintf('\n=== Результаты ===\n');
+fprintf('Длина кривой: %.3f\n', spline.length());
+fprintf('Истинная длина (полуокружность): %.3f\n', pi * r);
+fprintf('Средняя кривизна: %.3f\n', mean(abs(curvature_vals(~isnan(curvature_vals)))));
+fprintf('Ожидаемая кривизна: %.3f\n', 1/r);
+
+fprintf('\n=== Сравнение разных alpha ===\n');
+for i = 1:length(alphas)
+    curve_temp = results{i}.predict(u_dense, 0);
+    deviation_temp = mean(sqrt(sum((curve_temp - true_curve).^2, 2)));
+    curvature_temp = results{i}.curvature(u_dense);
+    curvature_var = var(curvature_temp(~isnan(curvature_temp)));
+    
+    fprintf('?=%.2f: среднее отклонение=%.4f, вариация кривизны=%.6f\n', ...
+        alphas(i), deviation_temp, curvature_var);
+end%% Тестирование параметрических сплайнов на образующей баллона
+% Баллон состоит из двух полусфер и цилиндра
+% Используется новый класс ParametricQuinticSplineNew с явными граничными условиями
+
+clear all; close all; clc;
+
+%% Параметры баллона
+R = 3.0;            % Радиус баллона
+L = 8.0;            % Длина цилиндрической части
+noise_std = 1e-3;   % Уровень шума (робастность)
+
+%% Генерация точек образующей (три участка)
+% Баллон параллелен Ox, середина в (0, R), симметричен относительно Oy
+
+% --- Участок 1: Левая полусфера ---
+% Окружность с центром (-L/2, 0), движение от полюса вверх-вправо
+n_sphere_left = 5;
+s1 = linspace(0, pi*R/2, n_sphere_left)';  % длина дуги
+theta1 = s1 / R;  % угол в радианах от полюса
+
+% x = -L/2 - R*cos(θ), но θ отсчитывается от π (полюс слева)
+% При движении от полюса: x = -L/2 - R*cos(π - θ) = -L/2 + R*cos(θ) - неправильно!
+% Правильно: x = -L/2 + R*cos(π - s/R) при движении от полюса вверх
+% Или: x = -L/2 - R*cos(s/R), y = R*sin(s/R) для движения от левого полюса
+
+x1_true = -L/2 - R * cos(s1/R);
+y1_true = R * sin(s1/R);
+
+% --- Участок 2: Цилиндр ---
+% Горизонтальный участок y = R
+n_cyl = 3;
+s2 = linspace(0, L, n_cyl)';
+x2_true = -L/2 + s2;
+y2_true = R * ones(n_cyl, 1);
+
+% --- Участок 3: Правая полусфера ---
+% Окружность с центром (L/2, 0), движение от стыка к полюсу
+n_sphere_right = 5;
+s3 = linspace(0, pi*R/2, n_sphere_right)';
+% Движение от верхней точки к правому полюсу
+% x = L/2 + R*sin(s/R), y = R*cos(s/R)
+x3_true = L/2 + R * sin(s3/R);
+y3_true = R * cos(s3/R);
+
+%% Проверка стыковки
+fprintf('=== Проверка стыковки участков ===\n');
+fprintf('Левая полусфера: (%.3f, %.3f) -> (%.3f, %.3f)\n', ...
+    x1_true(1), y1_true(1), x1_true(end), y1_true(end));
+fprintf('Цилиндр:         (%.3f, %.3f) -> (%.3f, %.3f)\n', ...
+    x2_true(1), y2_true(1), x2_true(end), y2_true(end));
+fprintf('Правая полусфера: (%.3f, %.3f) -> (%.3f, %.3f)\n', ...
+    x3_true(1), y3_true(1), x3_true(end), y3_true(end));
+
+%% Добавление шума (тест на робастность)
+rng(42);
+x1_noisy = x1_true + noise_std * randn(n_sphere_left, 1);
+y1_noisy = y1_true + noise_std * randn(n_sphere_left, 1);
+x2_noisy = x2_true + noise_std * randn(n_cyl, 1);
+y2_noisy = y2_true + noise_std * randn(n_cyl, 1);
+x3_noisy = x3_true + noise_std * randn(n_sphere_right, 1);
+y3_noisy = y3_true + noise_std * randn(n_sphere_right, 1);
+
+%% Граничные условия (явные первые и вторые производные)
+% Формулы для окружности радиуса R при параметризации длиной дуги s:
+% x'' = -cos(s/R)/R, y'' = -sin(s/R)/R (для окружности с центром в начале)
+
+% === Сплайн 1 (левая полусфера): s ∈ [0, πR/2] ===
+% Начало (s=0, левый полюс): x = -L/2-R, y = 0
+%   x' = sin(0) = 0, y' = cos(0) = 1
+%   x'' = cos(0)/R = 1/R, y'' = -sin(0)/R = 0
+% Конец (s=πR/2, стык с цилиндром): x = -L/2, y = R
+%   x' = sin(π/2) = 1, y' = cos(π/2) = 0
+%   x'' = cos(π/2)/R = 0, y'' = -sin(π/2)/R = -1/R
+
+bc1_start = struct('m_x', 0, 'm_y', 1, 'M_x', 1/R, 'M_y', 0);
+bc1_end   = struct('m_x', 1, 'm_y', 0, 'M_x', 0, 'M_y', -1/R);
+
+% === Сплайн 2 (цилиндр): s ∈ [0, L] ===
+% Начало: x = -L/2, y = R, прямая линия
+%   x' = 1, y' = 0
+%   x'' = 0, y'' = 0
+% Конец: то же самое
+
+bc2_start = struct('m_x', 1, 'm_y', 0, 'M_x', 0, 'M_y', -1/R);
+bc2_end   = struct('m_x', 1, 'm_y', 0, 'M_x', 0, 'M_y', 0);
+
+% === Сплайн 3 (правая полусфера): s ∈ [0, πR/2] ===
+% Начало (s=0, стык с цилиндром): x = L/2, y = R
+%   x' = cos(0) = 1, y' = -sin(0) = 0
+%   x'' = -sin(0)/R = 0, y'' = -cos(0)/R = -1/R ... 
+% НЕТ! Для нашей параметризации:
+% x = L/2 + R*sin(s/R), y = R*cos(s/R)
+% x' = cos(s/R), y' = -sin(s/R)
+% x'' = -sin(s/R)/R, y'' = -cos(s/R)/R
+% При s=0: x'=1, y'=0, x''=0, y''=-1/R -- но это кривизна направлена вниз!
+
+% ПРАВИЛЬНО для правой полусферы (движение от стыка к полюсу):
+% Окружность с центром (L/2, 0), кривизна направлена к центру (влево)
+% x = L/2 + R*sin(s/R), y = R*cos(s/R)
+% x' = cos(s/R), y' = -sin(s/R)
+% x'' = -sin(s/R)/R, y'' = -cos(s/R)/R
+
+% При s=0 (стык): x'=1, y'=0, x''=0, y''=-1/R
+% При s=πR/2 (полюс): x'=0, y'=-1, x''=-1/R, y''=0
+
+bc3_start = struct('m_x', 1, 'm_y', 0, 'M_x', 0, 'M_y', -1/R);
+bc3_end   = struct('m_x', 0, 'm_y', -1, 'M_x', -1/R, 'M_y', 0);
+
+%% Создание и обучение сплайнов (ОДИН РАЗ для каждого alpha)
+alphas = [0.99, 0.95, 0.90];
+alpha_main = 0.95;
+
+points1 = [x1_noisy, y1_noisy];
+points2 = [x2_noisy, y2_noisy];
+points3 = [x3_noisy, y3_noisy];
+
+fprintf('\n=== Обучение сплайнов ===\n');
+fprintf('Параметры баллона: R=%.1f, L=%.1f\n', R, L);
+fprintf('Уровень шума: sigma=%.3f\n', noise_std);
+
+% Обучаем все варианты и сохраняем результаты
+n_alphas = length(alphas);
+spline1_results = cell(n_alphas, 1);
+spline2_results = cell(n_alphas, 1);
+spline3_results = cell(n_alphas, 1);
+
+for i = 1:n_alphas
+    alpha = alphas(i);
+    fprintf('\n--- alpha = %.2f ---\n', alpha);
+    
+    % Создаем и обучаем сплайны
+    s1 = Splines.ParametricQuinticSplineNew(points1, bc1_start, bc1_end);
+    s2 = Splines.ParametricQuinticSplineNew(points2, bc2_start, bc2_end);
+    s3 = Splines.ParametricQuinticSplineNew(points3, bc3_start, bc3_end);
+    
+    s1.fit(alpha);
+    s2.fit(alpha);
+    s3.fit(alpha);
+    
+    % Сохраняем объекты сплайнов
+    spline1_results{i} = s1;
+    spline2_results{i} = s2;
+    spline3_results{i} = s3;
+end
+
+% Индекс основного варианта
+idx_main = find(alphas == alpha_main);
+
+%% Генерация плотных данных для визуализации
+n_dense = 100;
+
+% Находим основной индекс (второй в массиве alphas = 0.95)
+idx_main = 2;
+
+% Используем сохраненные результаты
+spline1 = spline1_results{idx_main};
+spline2 = spline2_results{idx_main};
+spline3 = spline3_results{idx_main};
+
+t1_dense = linspace(0, spline1.u(end), n_dense)';
+t2_dense = linspace(0, spline2.u(end), n_dense)';
+t3_dense = linspace(0, spline3.u(end), n_dense)';
+
+% Предсказания для основного alpha
+pts1 = spline1.predict(t1_dense, 0);
+pts2 = spline2.predict(t2_dense, 0);
+pts3 = spline3.predict(t3_dense, 0);
+
+deriv1_1 = spline1.predict(t1_dense, 1);
+deriv1_2 = spline2.predict(t2_dense, 1);
+deriv1_3 = spline3.predict(t3_dense, 1);
+
+deriv2_1 = spline1.predict(t1_dense, 2);
+deriv2_2 = spline2.predict(t2_dense, 2);
+deriv2_3 = spline3.predict(t3_dense, 2);
+
+curv1 = spline1.curvature(t1_dense);
+curv2 = spline2.curvature(t2_dense);
+curv3 = spline3.curvature(t3_dense);
+
+%% Объединение данных для единых графиков
+u_boundary1 = spline1.u(end);
+u_boundary2 = spline1.u(end) + spline2.u(end);
+
+u_combined = [t1_dense; u_boundary1 + t2_dense; u_boundary2 + t3_dense];
+
+x_combined = [pts1(:,1); pts2(:,1); pts3(:,1)];
+y_combined = [pts1(:,2); pts2(:,2); pts3(:,2)];
+
+xp_combined = [deriv1_1(:,1); deriv1_2(:,1); deriv1_3(:,1)];
+yp_combined = [deriv1_1(:,2); deriv1_2(:,2); deriv1_3(:,2)];
+
+xpp_combined = [deriv2_1(:,1); deriv2_2(:,1); deriv2_3(:,1)];
+ypp_combined = [deriv2_1(:,2); deriv2_2(:,2); deriv2_3(:,2)];
+
+curv_combined = [curv1; curv2; curv3];
+
+n1 = length(t1_dense);
+n2 = length(t2_dense);
+
+%% Вычисление y'(x) и y''(x)
+% dy/dx = y'(u) / x'(u)
+% d²y/dx² = (x'(u)*y''(u) - y'(u)*x''(u)) / [x'(u)]³
+
+yprime_x = yp_combined ./ xp_combined;
+
+denom = xp_combined.^3;
+denom(abs(denom) < 1e-10) = sign(denom(abs(denom) < 1e-10)) * 1e-10;
+denom(denom == 0) = 1e-10;
+yprime2_x = (xp_combined .* ypp_combined - yp_combined .* xpp_combined) ./ denom;
+
+%% ============================================
+%% ВИЗУАЛИЗАЦИЯ
+%% ============================================
+
+%% Рисунок 1: Образующая кривая
+figure('Name', 'Образующая баллона', 'Position', [100, 100, 1200, 600]);
+
+subplot(1, 2, 1);
+hold on;
+
+% Истинная форма для заливки
+x1_fill = linspace(-L/2-R, -L/2, 100)';
+y1_fill = sqrt(R^2 - (x1_fill + L/2).^2);
+x2_fill = linspace(-L/2, L/2, 100)';
+y2_fill = R * ones(100, 1);
+x3_fill = linspace(L/2, L/2+R, 100)';
+y3_fill = sqrt(R^2 - (x3_fill - L/2).^2);
+
+fill([x1_fill; x2_fill; x3_fill; flip(x3_fill); flip(x2_fill); flip(x1_fill)], ...
+     [y1_fill; y2_fill; y3_fill; -flip(y3_fill); -flip(y2_fill); -flip(y1_fill)], ...
+     [0.9, 0.9, 0.9], 'EdgeColor', 'none', 'FaceAlpha', 0.3, ...
+     'DisplayName', 'Истинная форма');
+
+% Зашумленные точки
+plot(x1_noisy, y1_noisy, 'ro', 'MarkerSize', 4, 'MarkerFaceColor', 'r', ...
+     'DisplayName', 'Участок 1');
+plot(x2_noisy, y2_noisy, 'go', 'MarkerSize', 4, 'MarkerFaceColor', 'g', ...
+     'DisplayName', 'Участок 2');
+plot(x3_noisy, y3_noisy, 'bo', 'MarkerSize', 4, 'MarkerFaceColor', 'b', ...
+     'DisplayName', 'Участок 3');
+
+% Сплайны
+plot(pts1(:,1), pts1(:,2), 'r-', 'LineWidth', 2, 'DisplayName', 'Сплайн 1');
+plot(pts2(:,1), pts2(:,2), 'g-', 'LineWidth', 2, 'DisplayName', 'Сплайн 2');
+plot(pts3(:,1), pts3(:,2), 'b-', 'LineWidth', 2, 'DisplayName', 'Сплайн 3');
+
+% Точки стыка
+plot([-L/2, L/2], [R, R], 'ko', 'MarkerSize', 10, 'MarkerFaceColor', 'y', ...
+     'DisplayName', 'Точки стыка');
+
+xlabel('x'); ylabel('y');
+title(sprintf('Образующая баллона (\\alpha = %.2f)', alpha_main));
+axis equal; grid on; legend('Location', 'best');
+xlim([-L/2-R-1, L/2+R+1]);
+
+subplot(1, 2, 2);
+hold on;
+
+% Сравнение alpha (используем сохраненные результаты)
+colors = {'r', 'g', 'b', 'm'};
+for i = 1:n_alphas
+    s1 = spline1_results{i};
+    s2 = spline2_results{i};
+    s3 = spline3_results{i};
+    
+    t1_d = linspace(0, s1.u(end), n_dense)';
+    t2_d = linspace(0, s2.u(end), n_dense)';
+    t3_d = linspace(0, s3.u(end), n_dense)';
+    
+    p1 = s1.predict(t1_d, 0);
+    p2 = s2.predict(t2_d, 0);
+    p3 = s3.predict(t3_d, 0);
+    
+    plot([p1(:,1); p2(:,1); p3(:,1)], [p1(:,2); p2(:,2); p3(:,2)], ...
+         colors{i}, 'LineWidth', 2, 'DisplayName', sprintf('\\alpha = %.2f', alphas(i)));
+end
+
+% Истинная кривая
+plot([x1_fill; x2_fill; x3_fill], [y1_fill; y2_fill; y3_fill], ...
+     'k--', 'LineWidth', 1.5, 'DisplayName', 'Истинная форма');
+
+xlabel('x'); ylabel('y');
+title('Сравнение уровней сглаживания');
+axis equal; grid on; legend('Location', 'best');
+
+%% Рисунок 2: x'(u)
+figure('Name', 'x''(u) - первая производная', 'Position', [150, 150, 800, 500]);
+hold on;
+
+plot(u_combined(1:n1), xp_combined(1:n1), 'r-', 'LineWidth', 2, ...
+     'DisplayName', 'Сплайн 1 (левая полусфера)');
+plot(u_combined(n1+1:n1+n2), xp_combined(n1+1:n1+n2), 'g-', 'LineWidth', 2, ...
+     'DisplayName', 'Сплайн 2 (цилиндр)');
+plot(u_combined(n1+n2+1:end), xp_combined(n1+n2+1:end), 'b-', 'LineWidth', 2, ...
+     'DisplayName', 'Сплайн 3 (правая полусфера)');
+
+xline(u_boundary1, 'k--', 'LineWidth', 1.5, 'DisplayName', 'Границы участков');
+xline(u_boundary2, 'k--', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+
+xlabel('Параметр u'); ylabel('x''(u)');
+title('Первая производная x по параметру u');
+legend('Location', 'best'); grid on;
+
+%% Рисунок 3: y'(u)
+figure('Name', 'y''(u) - первая производная', 'Position', [200, 200, 800, 500]);
+hold on;
+
+plot(u_combined(1:n1), yp_combined(1:n1), 'r-', 'LineWidth', 2, ...
+     'DisplayName', 'Сплайн 1 (левая полусфера)');
+plot(u_combined(n1+1:n1+n2), yp_combined(n1+1:n1+n2), 'g-', 'LineWidth', 2, ...
+     'DisplayName', 'Сплайн 2 (цилиндр)');
+plot(u_combined(n1+n2+1:end), yp_combined(n1+n2+1:end), 'b-', 'LineWidth', 2, ...
+     'DisplayName', 'Сплайн 3 (правая полусфера)');
+
+xline(u_boundary1, 'k--', 'LineWidth', 1.5);
+xline(u_boundary2, 'k--', 'LineWidth', 1.5);
+yline(0, 'k:', 'LineWidth', 1);
+
+xlabel('Параметр u'); ylabel('y''(u)');
+title('Первая производная y по параметру u');
+legend('Location', 'best'); grid on;
+
+%% Рисунок 4: x''(u)
+figure('Name', 'x''''(u) - вторая производная', 'Position', [250, 250, 800, 500]);
+hold on;
+
+plot(u_combined(1:n1), xpp_combined(1:n1), 'r-', 'LineWidth', 2, ...
+     'DisplayName', 'Сплайн 1 (левая полусфера)');
+plot(u_combined(n1+1:n1+n2), xpp_combined(n1+1:n1+n2), 'g-', 'LineWidth', 2, ...
+     'DisplayName', 'Сплайн 2 (цилиндр)');
+plot(u_combined(n1+n2+1:end), xpp_combined(n1+n2+1:end), 'b-', 'LineWidth', 2, ...
+     'DisplayName', 'Сплайн 3 (правая полусфера)');
+
+xline(u_boundary1, 'k--', 'LineWidth', 1.5);
+xline(u_boundary2, 'k--', 'LineWidth', 1.5);
+yline(0, 'k:', 'LineWidth', 1);
+
+% Теоретические значения
+yline(1/R, 'm--', 'LineWidth', 1, 'DisplayName', sprintf('Теор. +1/R = %.3f', 1/R));
+yline(-1/R, 'c--', 'LineWidth', 1, 'DisplayName', sprintf('Теор. -1/R = %.3f', -1/R));
+
+xlabel('Параметр u'); ylabel('x''''(u)');
+title('Вторая производная x по параметру u');
+legend('Location', 'best'); grid on;
+
+%% Рисунок 5: y''(u)
+figure('Name', 'y''''(u) - вторая производная', 'Position', [300, 300, 800, 500]);
+hold on;
+
+plot(u_combined(1:n1), ypp_combined(1:n1), 'r-', 'LineWidth', 2, ...
+     'DisplayName', 'Сплайн 1 (левая полусфера)');
+plot(u_combined(n1+1:n1+n2), ypp_combined(n1+1:n1+n2), 'g-', 'LineWidth', 2, ...
+     'DisplayName', 'Сплайн 2 (цилиндр)');
+plot(u_combined(n1+n2+1:end), ypp_combined(n1+n2+1:end), 'b-', 'LineWidth', 2, ...
+     'DisplayName', 'Сплайн 3 (правая полусфера)');
+
+xline(u_boundary1, 'k--', 'LineWidth', 1.5);
+xline(u_boundary2, 'k--', 'LineWidth', 1.5);
+yline(0, 'k:', 'LineWidth', 1);
+
+yline(-1/R, 'm--', 'LineWidth', 1, 'DisplayName', sprintf('Теор. -1/R = %.3f', -1/R));
+
+xlabel('Параметр u'); ylabel('y''''(u)');
+title('Вторая производная y по параметру u');
+legend('Location', 'best'); grid on;
+
+%% Рисунок 6: y'(x)
+figure('Name', 'y''(x) - производная по x', 'Position', [350, 350, 800, 500]);
+hold on;
+
+plot(x_combined(1:n1), yprime_x(1:n1), 'r-', 'LineWidth', 2, ...
+     'DisplayName', 'Сплайн 1 (левая полусфера)');
+plot(x_combined(n1+1:n1+n2), yprime_x(n1+1:n1+n2), 'g-', 'LineWidth', 2, ...
+     'DisplayName', 'Сплайн 2 (цилиндр)');
+plot(x_combined(n1+n2+1:end), yprime_x(n1+n2+1:end), 'b-', 'LineWidth', 2, ...
+     'DisplayName', 'Сплайн 3 (правая полусфера)');
+
+% Теоретические значения
+x_left_th = linspace(-L/2-R+0.01, -L/2-0.01, 50)';
+yprime_left_th = -(x_left_th + L/2) ./ sqrt(R^2 - (x_left_th + L/2).^2);
+x_right_th = linspace(L/2+0.01, L/2+R-0.01, 50)';
+yprime_right_th = -(x_right_th - L/2) ./ sqrt(R^2 - (x_right_th - L/2).^2);
+
+plot(x_left_th, yprime_left_th, 'k--', 'LineWidth', 1.5, 'DisplayName', 'Теоретическая');
+plot(x_right_th, yprime_right_th, 'k--', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+
+xline(-L/2, 'k--', 'LineWidth', 1.5);
+xline(L/2, 'k--', 'LineWidth', 1.5);
+yline(0, 'k:', 'LineWidth', 1);
+
+xlabel('x'); ylabel('dy/dx');
+title('Первая производная y по x');
+legend('Location', 'best'); grid on;
+
+%% Рисунок 7: y''(x)
+figure('Name', 'y''''(x) - вторая производная по x', 'Position', [400, 400, 800, 500]);
+hold on;
+
+plot(x_combined(1:n1), yprime2_x(1:n1), 'r-', 'LineWidth', 2, ...
+     'DisplayName', 'Сплайн 1 (левая полусфера)');
+plot(x_combined(n1+1:n1+n2), yprime2_x(n1+1:n1+n2), 'g-', 'LineWidth', 2, ...
+     'DisplayName', 'Сплайн 2 (цилиндр)');
+plot(x_combined(n1+n2+1:end), yprime2_x(n1+n2+1:end), 'b-', 'LineWidth', 2, ...
+     'DisplayName', 'Сплайн 3 (правая полусфера)');
+
+% Теоретические значения второй производной
+yprime2_left_th = -R^2 ./ (R^2 - (x_left_th + L/2).^2).^(3/2);
+yprime2_right_th = -R^2 ./ (R^2 - (x_right_th - L/2).^2).^(3/2);
+
+plot(x_left_th, yprime2_left_th, 'k--', 'LineWidth', 1.5, 'DisplayName', 'Теоретическая');
+plot(x_right_th, yprime2_right_th, 'k--', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+
+xline(-L/2, 'k--', 'LineWidth', 1.5);
+xline(L/2, 'k--', 'LineWidth', 1.5);
+yline(0, 'k:', 'LineWidth', 1);
+yline(-1/R, 'm--', 'LineWidth', 1);
+
+% Аннотации разрывов
+text(-L/2 + 0.5, -0.3, sprintf('Разрыв: \\Deltay'''' = %.3f', 1/R), 'FontSize', 10);
+text(L/2 + 0.5, -0.3, sprintf('Разрыв: \\Deltay'''' = %.3f', 1/R), 'FontSize', 10);
+
+xlabel('x'); ylabel('d²y/dx²');
+title('Вторая производная y по x (демонстрация разрыва кривизны)');
+legend('Location', 'best'); grid on;
+
+%% Рисунок 8: Кривизна
+figure('Name', 'Кривизна', 'Position', [450, 450, 1200, 500]);
+
+subplot(1, 2, 1);
+hold on;
+plot(u_combined(1:n1), curv_combined(1:n1), 'r-', 'LineWidth', 2, ...
+     'DisplayName', 'Сплайн 1');
+plot(u_combined(n1+1:n1+n2), curv_combined(n1+1:n1+n2), 'g-', 'LineWidth', 2, ...
+     'DisplayName', 'Сплайн 2');
+plot(u_combined(n1+n2+1:end), curv_combined(n1+n2+1:end), 'b-', 'LineWidth', 2, ...
+     'DisplayName', 'Сплайн 3');
+
+xline(u_boundary1, 'k--', 'LineWidth', 1.5);
+xline(u_boundary2, 'k--', 'LineWidth', 1.5);
+yline(1/R, 'm--', 'LineWidth', 1.5, 'DisplayName', sprintf('Теор. 1/R = %.4f', 1/R));
+yline(0, 'k:', 'LineWidth', 1);
+
+xlabel('Параметр u'); ylabel('\kappa(u)');
+title(sprintf('Кривизна (\\alpha = %.2f)', alpha_main));
+legend('Location', 'best'); grid on;
+
+subplot(1, 2, 2);
+hold on;
+
+% Сравнение разных alpha (используем сохраненные результаты)
+colors = {'r', 'g', 'b'};
+for i = 1:n_alphas
+    s1 = spline1_results{i};
+    s2 = spline2_results{i};
+    s3 = spline3_results{i};
+    
+    t1_d = linspace(0, s1.u(end), n_dense)';
+    t2_d = linspace(0, s2.u(end), n_dense)';
+    t3_d = linspace(0, s3.u(end), n_dense)';
+    
+    c1 = s1.curvature(t1_d);
+    c2 = s2.curvature(t2_d);
+    c3 = s3.curvature(t3_d);
+    
+    u_comb = [t1_d; s1.u(end) + t2_d; s1.u(end) + s2.u(end) + t3_d];
+    c_comb = [c1; c2; c3];
+    
+    plot(u_comb, c_comb, colors{i}, 'LineWidth', 1.5, ...
+         'DisplayName', sprintf('\\alpha = %.2f', alphas(i)));
+end
+
+xline(u_boundary1, 'k--', 'LineWidth', 1.5);
+xline(u_boundary2, 'k--', 'LineWidth', 1.5);
+yline(1/R, 'k--', 'LineWidth', 1, 'DisplayName', 'Теор. 1/R');
+yline(0, 'k:', 'LineWidth', 1);
+
+xlabel('Параметр u'); ylabel('\kappa(u)');
+title('Влияние сглаживания на разрыв кривизны');
+legend('Location', 'best'); grid on;
+
+%% Рисунок 9: Отклонение от истинной формы
+figure('Name', 'Отклонение', 'Position', [500, 500, 1000, 400]);
+
+% Отклонения для основного alpha
+y1_true_dense = sqrt(R^2 - (pts1(:,1) + L/2).^2);
+y3_true_dense = sqrt(R^2 - (pts3(:,1) - L/2).^2);
+dev1 = abs(pts1(:,2) - y1_true_dense);
+dev2 = abs(pts2(:,2) - R);
+dev3 = abs(pts3(:,2) - y3_true_dense);
+
+subplot(1, 2, 1);
+hold on;
+plot(pts1(:,1), dev1, 'r-', 'LineWidth', 2, 'DisplayName', 'Сплайн 1');
+plot(pts2(:,1), dev2, 'g-', 'LineWidth', 2, 'DisplayName', 'Сплайн 2');
+plot(pts3(:,1), dev3, 'b-', 'LineWidth', 2, 'DisplayName', 'Сплайн 3');
+
+xline(-L/2, 'k--', 'LineWidth', 1);
+xline(L/2, 'k--', 'LineWidth', 1);
+
+xlabel('x'); ylabel('|y_{сплайн} - y_{истин}|');
+title('Абсолютное отклонение от истинной формы');
+legend('Location', 'best'); grid on;
+
+subplot(1, 2, 2);
+hold on;
+
+% Среднее отклонение для разных alpha (используем сохраненные результаты)
+mean_devs = zeros(n_alphas, 1);
+for i = 1:n_alphas
+    s1 = spline1_results{i};
+    s2 = spline2_results{i};
+    s3 = spline3_results{i};
+    
+    t1_d = linspace(0, s1.u(end), n_dense)';
+    t2_d = linspace(0, s2.u(end), n_dense)';
+    t3_d = linspace(0, s3.u(end), n_dense)';
+    
+    p1 = s1.predict(t1_d, 0);
+    p2 = s2.predict(t2_d, 0);
+    p3 = s3.predict(t3_d, 0);
+    
+    y1_t = sqrt(R^2 - (p1(:,1) + L/2).^2);
+    y3_t = sqrt(R^2 - (p3(:,1) - L/2).^2);
+    
+    dev_total = [abs(p1(:,2) - y1_t); abs(p2(:,2) - R); abs(p3(:,2) - y3_t)];
+    mean_devs(i) = mean(dev_total);
+end
+
+bar(alphas, mean_devs, 'FaceColor', [0.3, 0.6, 0.9]);
+xlabel('\alpha'); ylabel('Среднее отклонение');
+title('Зависимость отклонения от параметра сглаживания');
+grid on;
+xticks(alphas);
+
+%% Вывод статистики
+fprintf('\n=== Результаты ===\n');
+fprintf('Параметры: R=%.2f, L=%.2f, noise=%.3f\n', R, L, noise_std);
+fprintf('Параметр сглаживания: alpha=%.2f\n', alpha_main);
+
+fprintf('\nДлины участков:\n');
+fprintf('  Левая полусфера: %.3f (теор: %.3f)\n', spline1.u(end), pi*R/2);
+fprintf('  Цилиндр: %.3f (теор: %.3f)\n', spline2.u(end), L);
+fprintf('  Правая полусфера: %.3f (теор: %.3f)\n', spline3.u(end), pi*R/2);
+
+fprintf('\nКривизна (теор. для полусфер: 1/R = %.4f):\n', 1/R);
+fprintf('  Сплайн 1: средняя = %.4f, std = %.4f\n', mean(curv1), std(curv1));
+fprintf('  Сплайн 2: средняя = %.4f, std = %.4f\n', mean(curv2), std(curv2));
+fprintf('  Сплайн 3: средняя = %.4f, std = %.4f\n', mean(curv3), std(curv3));
+
+fprintf('\nРазрыв кривизны в стыках:\n');
+fprintf('  Левый стык: |κ₁(конец) - κ₂(начало)| = %.4f (теор: %.4f)\n', ...
+    abs(curv1(end) - curv2(1)), 1/R);
+fprintf('  Правый стык: |κ₂(конец) - κ₃(начало)| = %.4f (теор: %.4f)\n', ...
+    abs(curv2(end) - curv3(1)), 1/R);
+
+fprintf('\nВторые производные на границах:\n');
+fprintf('  Сплайн 1: x''''(0)=%.4f (теор: %.4f), y''''(0)=%.4f (теор: %.4f)\n', ...
+    deriv2_1(1,1), 1/R, deriv2_1(1,2), 0);
+fprintf('  Сплайн 1: x''''(end)=%.4f (теор: %.4f), y''''(end)=%.4f (теор: %.4f)\n', ...
+    deriv2_1(end,1), 0, deriv2_1(end,2), -1/R);
+
+fprintf('\nСреднее отклонение от истинной формы:\n');
+for i = 1:n_alphas
+    fprintf('  alpha=%.2f: %.6f\n', alphas(i), mean_devs(i));
+end
+
+fprintf('\n=== Тест завершён ===\n');
