@@ -20,6 +20,7 @@ class ForwardWindingBuilder(WindingLineBuilderBase):
         self._solver = solver
         self._normalize = normalize_tangent
         self.eps = eps
+        self._diagnostics = {}
 
         # Внутренний вычислитель правых частей
         self._rhs = ForwardRHS(surface, deviation_law, normalize_tangent, eps)
@@ -117,14 +118,39 @@ class ForwardWindingBuilder(WindingLineBuilderBase):
         def rhs_wrapper(s: float, y: np.ndarray) -> np.ndarray:
             return self._rhs(s, y)
 
-        # 6. Запуск численного интегрирования
-        s_vals, y_vals = self._solver.solve(
-            fun=rhs_wrapper,
-            t_span=s_span,
-            y0=y0,
-            t_eval=s_eval,
-            **kwargs
-        )
+        # # 6. Запуск численного интегрирования
+        # s_vals, y_vals = self._solver.solve(
+        #     fun=rhs_wrapper,
+        #     t_span=s_span,
+        #     y0=y0,
+        #     t_eval=s_eval,
+        #     **kwargs
+        # )
+        try:
+            s_vals, y_vals, diag = self._solver.solve_with_diagnostics(
+                rhs_wrapper, s_span, y0, t_eval=s_eval, **kwargs
+            )
+        except Exception as e:
+            self._diagnostics = {
+                'success': False,
+                'message': f'Исключение: {str(e)}',
+                'num_points': 0,
+                'final_param': s_span[0]
+            }
+            self._success = False
+            return np.array([]), np.array([])
+
+        self._diagnostics = {
+            'success': diag['success'],
+            'message': diag['message'],
+            'num_points': len(s_vals),
+            'final_param': diag['final_t'],
+            'solver_message': diag['solver_message']
+        }
+        if not diag['success']:
+            self._success = False
+            return s_vals, np.array([])  # или возвращаем частичные точки
+
 
         # 7. Сохранение результатов
         self._s_values = s_vals
@@ -163,6 +189,8 @@ class ForwardWindingBuilder(WindingLineBuilderBase):
 
     def get_3d_points(self) -> Optional[np.ndarray]:
         return self._points_3d
+    def get_diagnostics(self) -> dict:
+        return self._diagnostics
 
     @property
     def last_run_successful(self) -> bool:

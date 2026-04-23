@@ -5,6 +5,10 @@ class WindingLineBuilderBase(ABC):
     @abstractmethod
     def build(self, initial_point, end_param=None, eval_points=None, **kwargs) -> Tuple[np.ndarray, np.ndarray]:
         pass
+    @abstractmethod
+    def get_diagnostics(self) -> dict:
+        """Возвращает диагностическую информацию о последнем вызове build."""
+        pass
 
 class WindingResultProvider(ABC):
     @abstractmethod

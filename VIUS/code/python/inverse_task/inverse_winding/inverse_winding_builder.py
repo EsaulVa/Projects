@@ -40,6 +40,7 @@ class InvWindingLineBuilder:
         self._trajectory = trajectory
         self._rhs_calc = rhs_calculator
         self._solver = solver
+        self._diagnostics = {}
 
         # Результаты последнего расчёта
         self._z_values: Optional[np.ndarray] = None
@@ -93,13 +94,37 @@ class InvWindingLineBuilder:
         y0 = np.array([u0, v0], dtype=float)
 
         # Вызов решателя ОДУ
-        z_vals, uv = self._solver.solve(
-            fun=rhs_wrapper,
-            t_span=(0.0, z_end),
-            y0=y0,
-            t_eval=z_eval,
-            **solver_kwargs
-        )
+        # z_vals, uv = self._solver.solve(
+        #     fun=rhs_wrapper,
+        #     t_span=(0.0, z_end),
+        #     y0=y0,
+        #     t_eval=z_eval,
+        #     **solver_kwargs
+        # )
+        try:
+            z_vals,uv, diag = self._solver.solve_with_diagnostics(
+               fun=rhs_wrapper, t_span=(0,z_end), y0=y0, t_eval=z_eval, **solver_kwargs
+            )
+        except Exception as e:
+            self._diagnostics = {
+                'success': False,
+                'message': f'Исключение: {str(e)}',
+                'num_points': 0,
+                'final_param': diag['final_t']
+            }
+            self._success = False
+            return np.array([]), np.array([])
+
+        self._diagnostics = {
+            'success': diag['success'],
+            'message': diag['message'],
+            'num_points': len(z_vals),
+            'final_param': diag['final_t'],
+            'solver_message': diag['solver_message']
+        }
+        if not diag['success']:
+            self._success = False
+            return z_vals, np.array([])  # или возвращаем частичные точки
 
         # Сохраняем сырые результаты
         self._z_values = z_vals
@@ -132,12 +157,33 @@ class InvWindingLineBuilder:
     def get_3d_points(self) -> Optional[np.ndarray]:
         """Возвращает 3D-точки линии укладки."""
         return self._points_3d
+    def get_residuals(self):
+        if self._z_values is None or self._uv_states is None:
+            raise RuntimeError("Сначала выполните compute().")
+        z_vals = self._z_values
+        uv = self._uv_states
+        deltas = np.zeros_like(z_vals)
+        for i in range(len(z_vals)):
+            z = z_vals[i]
+            u, v = uv[i]
+            R = self._trajectory.R(z)
+            r = self._surface.position(u, v)
+            n = self._surface.normal(u, v)
+            diff = np.array(R) - np.array(r)
+            diff_norm = np.linalg.norm(diff)
+            if diff_norm > 1e-12:
+                delta = np.dot(diff / diff_norm, np.array(n))
+            else:
+                delta = 0.0
+            deltas[i] = delta
+        return z_vals, deltas
 
  #Целевой класс как адаптер между классом InvWindingLineBuilder и интерфейсом WindingLineBuilderBase
 class InverseWindingLineBuilder(WindingLineBuilderBase,WindingResultProvider):
     def __init__(self, inverse_builder: InvWindingLineBuilder):
         self._builder = inverse_builder
         self._last_success = False
+        self._diagnostics = {}
 
     def build(self, initial_point, initial_tangent=None, end_param=None,
               eval_points=None, **kwargs):
@@ -149,8 +195,13 @@ class InverseWindingLineBuilder(WindingLineBuilderBase,WindingResultProvider):
         z_vals, points = self._builder.compute(
             u0, v0, z_end=end_param, z_eval=eval_points, **kwargs
         )
+        self._diagnostics=self._builder._diagnostics
         self._last_success = True
         return z_vals, points
+    
+    def get_residuals(self):
+        return self._builder.get_residuals()
+        
 
     def get_uv_states(self):
         return self._builder.get_uv_states()
@@ -166,3 +217,5 @@ class InverseWindingLineBuilder(WindingLineBuilderBase,WindingResultProvider):
     @property
     def last_run_successful(self):
         return self._last_success
+    def get_diagnostics(self) -> dict:
+        return self._diagnostics

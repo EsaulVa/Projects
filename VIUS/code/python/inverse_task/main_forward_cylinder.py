@@ -15,7 +15,7 @@ import plotly.graph_objects as go
 from geometry.ellipsoid import EllipsoidWithDerivatives
 from geometry.cylinder import CylinderWithDerivatives,CylinderAnalytical
 from core.const_dev_law import ConstantDeviation
-from forward_winding.forward_rhs_calculator import ForwardRHS
+# from forward_winding.forward_rhs_calculator import ForwardRHS
 from forward_winding.forward_winding_builder import ForwardWindingBuilder
 from solvers.scipy_solver import SciPySolver
 
@@ -23,14 +23,14 @@ from solvers.scipy_solver import SciPySolver
 # 1. Параметры поверхности
 # ----------------------------------------------------------------------
 # Эллипсоид с полуосями a, b, c
-a, b, c = 3.0, 2.0, 1.5
-surface = EllipsoidWithDerivatives(a, b, c)
+# a, b, c = 3.0, 2.0, 1.5
+# surface = EllipsoidWithDerivatives(a, b, c)
 
-# surface = CylinderAnalytical(radius=2.0)
+surface = CylinderAnalytical(radius=4.0)
 deviation_law = ConstantDeviation(tan_theta=0.0)
 u0, v0 = 0.0, 0.0
-alpha = np.pi / 10         # 30 градусов
-s_end =12.0
+alpha = np.pi / 6        # 30 градусов
+s_end =30.0
 # ----------------------------------------------------------------------
 # 2. Параметры закона отклонения и численного интегрирования
 # ----------------------------------------------------------------------
@@ -62,7 +62,7 @@ builder = ForwardWindingBuilder(
 # s_end = 12.0
 
 # Точки вывода – равномерная сетка по s
-s_eval = np.linspace(0, s_end, 20)
+s_eval = np.linspace(0, s_end, 100)
 
 # ----------------------------------------------------------------------
 # 4. Запуск построения
@@ -92,8 +92,27 @@ print("Построение интерактивного графика...")
 fig = go.Figure()
 
 # 5.1. Поверхность эллипсоида (полупрозрачная)
-u_grid = np.linspace(0, 2*np.pi, 80)
-v_grid = np.linspace(-np.pi/2, np.pi/2, 50)
+# u_grid = np.linspace(0, 2*np.pi, 80)
+# v_grid = np.linspace(-np.pi/2, np.pi/2, 50)
+# U, V = np.meshgrid(u_grid, v_grid)
+# X = np.zeros_like(U)
+# Y = np.zeros_like(U)
+# Z = np.zeros_like(U)
+# for i in range(U.shape[0]):
+#     for j in range(U.shape[1]):
+#         p = surface.position(U[i,j], V[i,j])
+#         X[i,j], Y[i,j], Z[i,j] = p
+
+# fig.add_trace(go.Surface(
+#     x=X, y=Y, z=Z,
+#     opacity=0.4,
+#     colorscale='Viridis',
+#     showscale=False,
+#     name='Эллипсоид'
+# ))
+# 5.1. Поверхность цилиндра (полупрозрачная)
+u_grid = np.linspace(0, 2*np.pi, 80)          # полный оборот по углу
+v_grid = np.linspace(-1, s_end + 1, 100)      # достаточный диапазон высот
 U, V = np.meshgrid(u_grid, v_grid)
 X = np.zeros_like(U)
 Y = np.zeros_like(U)
@@ -102,15 +121,13 @@ for i in range(U.shape[0]):
     for j in range(U.shape[1]):
         p = surface.position(U[i,j], V[i,j])
         X[i,j], Y[i,j], Z[i,j] = p
-
 fig.add_trace(go.Surface(
     x=X, y=Y, z=Z,
     opacity=0.4,
-    colorscale='Viridis',
+    colorscale='Blues',
     showscale=False,
-    name='Эллипсоид'
+    name='Цилиндр'
 ))
-
 # 5.2. Линия укладки
 fig.add_trace(go.Scatter3d(
     x=line_3d[:,0], y=line_3d[:,1], z=line_3d[:,2],

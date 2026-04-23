@@ -100,7 +100,7 @@ a1, b1, c1 = 3.0, 2.5, 2.0
 E1 = EllipsoidWithDerivatives(a1, b1, c1)
 
 # Внутренний эллипсоид E2 (оправка) – соосный и подобный
-scale = 0.6
+scale = 0.2
 a2, b2, c2 = a1*scale, b1*scale, c1*scale
 E2 = EllipsoidWithDerivatives(a2, b2, c2)
 
@@ -132,14 +132,14 @@ print(f"Длина траектории: {traj.total_length:.3f}")
 rhs_calc = RightHandSideCalculator(
     surface=E2,
     trajectory=traj,
-    k=1.5,
-    max_ds_dz=0.2,
+    k=0,
+    max_ds_dz=200,
     delta_clip=0.999,
     eps=1e-12
 )
 
 # Решатель ОДУ (SciPy DOP853 для высокой точности)
-solver = SciPySolver(method='DOP853', rtol=1e-8, atol=1e-10)
+solver = SciPySolver(method='LSODA', rtol=1e-8, atol=1e-10)
 
 # ----------------------------------------------------------------------
 # 5. Строитель линии укладки и запуск расчёта
@@ -160,6 +160,28 @@ z_eval = np.linspace(0, traj.total_length, 400)
 print("Расчёт линии укладки на E2...")
 z_vals, line_3d = builder.build(initial_point=(u0, v0),
     eval_points=z_eval)
+diag = builder.get_diagnostics()
+
+if not diag['success']:
+    print("=== Построение не удалось ===")
+    print(f"Причина: {diag['message']}")
+    print(f"Количество успешно вычисленных точек: {diag['num_points']}")
+    print(f"Достигнутое значение параметра: {diag['final_param']:.6f}")
+    if 'solver_message' in diag:
+        print(f"Сообщение решателя: {diag['solver_message']}")
+    
+    # Анализируем и даём рекомендации
+    if 'шаг стал слишком мал' in diag['message']:
+        print("Рекомендация: возможно, система стала жёсткой. Попробуйте:")
+        print(" - уменьшить max_step")
+        print(" - использовать метод 'Radau' или 'BDF' для жёстких систем")
+    elif 'терминальному событию' in diag['message']:
+        print("Рекомендация: линия вышла за допустимые границы (u, v).")
+        print(" Проверьте диапазон параметризации поверхности.")
+    elif 'деление на ноль' in diag['message']:
+        print("Рекомендация: возможно, поверхность вырождена вблизи достигнутой точки.")
+else:
+    print(f"Успех! Построено {diag['num_points']} точек.")
 uv_states = builder.get_uv_states()
 print(f"Рассчитано {len(z_vals)} точек линии укладки.")
 
