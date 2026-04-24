@@ -60,9 +60,10 @@ forward_builder = ForwardWindingBuilder(
 
 # Начальные условия на E1
 u0, v0 = 0.0, 0.0          # экватор
-alpha = 0*np.pi / 12          # угол намотки 30°
+alpha = np.pi / 6          # угол намотки 30°
 s_end = 30.0                # длина линии
-s_eval = np.linspace(0, s_end, 50)
+count_points=100
+s_eval = np.linspace(0, s_end, count_points)
 
 # Запуск прямой задачи
 s_vals, line_E1 = forward_builder.build(
@@ -118,7 +119,7 @@ rhs_calc = RightHandSideCalculator(
     surface=E2,
     trajectory=traj,
     k=1,
-    max_ds_dz=2,
+    max_ds_dz=5,
     delta_clip=0.999,
     eps=1e-12
 )
@@ -131,7 +132,7 @@ builder_inv_raw = InvWindingLineBuilder(E2, traj, rhs_calc, solver_inverse)
 inverse_builder = InverseWindingLineBuilder(builder_inv_raw)
 
 # Точки вывода – равномерная сетка по длине траектории
-z_eval = np.linspace(0, traj.total_length, 50)
+z_eval = np.linspace(0, traj.total_length, count_points)
 
 # Начальные координаты на E2 те же (долгота/широта), что и на E1
 # (так как E2 соосен и подобен E1, соответствующая точка лежит на экваторе)
@@ -244,7 +245,7 @@ fig.add_trace(go.Scatter3d(
 ))
 
 # 5.5. Соединительные отрезки между точками схода (на E1) и точками на E2
-step = 5
+step = 2
 for i in range(0, len(z_vals), step):
     Rz = line_E1[i]   # точка траектории (на E1)
     Pz = line_E2[i]   # точка линии укладки на E2
@@ -253,7 +254,7 @@ for i in range(0, len(z_vals), step):
         y=[Rz[1], Pz[1]],
         z=[Rz[2], Pz[2]],
         mode='lines',
-        line=dict(color='green', width=2, dash='dot'),
+        line=dict(color='green', width=2, dash='solid'),
         showlegend=False
     ))
 
