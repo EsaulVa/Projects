@@ -52,9 +52,9 @@ forward_builder = ForwardWindingBuilder(
     eps=1e-12
 )
 
-u0, v0 = 0.0, np.pi/2-np.pi/10          # экватор
+u0, v0 = 0.0, np.pi/2-np.pi/15          # экватор
 alpha = 0          # 30°
-s_end = 35.0
+s_end = 21.0
 count_points = 20
 s_eval = np.linspace(0, s_end, count_points)
 
@@ -85,8 +85,8 @@ print("\n===== Обратная задача: восстановление ли�
 rhs_calc = RightHandSideCalculator(
     surface=E2,
     trajectory=traj,
-    k=2,
-    max_ds_dz=1,
+    k=5,
+    max_ds_dz=2,
     delta_clip=0.999,
     eps=1e-12
 )

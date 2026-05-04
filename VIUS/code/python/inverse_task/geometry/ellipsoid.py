@@ -81,3 +81,12 @@ class EllipsoidWithDerivatives(AnalyticalSurface):
         normal = self.normal(u, v)
         
         return {'r': r, 'ru': ru, 'rv': rv, 'normal': normal}
+    def second_derivatives(self, u, v):
+        a, b, c = self.a, self.b, self.c
+        cos_u, sin_u = jnp.cos(u), jnp.sin(u)
+        cos_v, sin_v = jnp.cos(v), jnp.sin(v)
+        
+        ruu = jnp.array([-a * cos_u * cos_v, -b * sin_u * cos_v, 0.0])
+        ruv = jnp.array([ a * sin_u * sin_v, -b * cos_u * sin_v, 0.0])
+        rvv = jnp.array([-a * cos_u * cos_v, -b * sin_u * cos_v, -c * sin_v])
+        return {'ruu': ruu, 'ruv': ruv, 'rvv': rvv}

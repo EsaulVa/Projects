@@ -28,9 +28,9 @@ surface = EllipsoidWithDerivatives(a, b, c)
 
 # surface = CylinderAnalytical(radius=2.0)
 deviation_law = ConstantDeviation(tan_theta=0.0)
-u0, v0 = 0.0, 0.0
+u0, v0 = 0.2, 0
 alpha = np.pi / 10         # 30 градусов
-s_end =12.0
+s_end =6.0
 # ----------------------------------------------------------------------
 # 2. Параметры закона отклонения и численного интегрирования
 # ----------------------------------------------------------------------
@@ -172,6 +172,7 @@ fig.update_layout(
     height=800,
     hovermode='closest'
 )
-
-fig.show()
-print("Готово.")
+fig.write_html('forward_plot.html')
+print("График сохранён в forward_plot.html")
+# fig.show()
+# print("Готово.")

@@ -45,6 +45,14 @@ class CylinderSegment(SurfaceSegment):
 
     def second_fundamental_form(self, u: float, v: float) -> Tuple[float, float, float]:
         return -self.R, 0.0, 0.0
+    def second_derivatives(self, u: float, v: float) -> Dict[str, np.ndarray]:
+        """Вторые производные для цилиндра."""
+        R = self.R
+        cos_u, sin_u = np.cos(u), np.sin(u)
+        ruu = np.array([-R * cos_u, -R * sin_u, 0.0])
+        ruv = np.array([0.0, 0.0, 0.0])
+        rvv = np.array([0.0, 0.0, 0.0])
+        return {'ruu': ruu, 'ruv': ruv, 'rvv': rvv}
 
 class SphereSegment(SurfaceSegment):
     def __init__(self, R: float, z0: float, is_upper: bool):
@@ -106,6 +114,13 @@ class SphereSegment(SurfaceSegment):
         # N = rvv·n = (fpp cos_u, fpp sin_u, 0) · (cos_u/denom, sin_u/denom, -fp/denom) = fpp / denom
         N = fpp / denom
         return L, M, N
+    def second_derivatives(self, u: float, v: float) -> Dict[str, np.ndarray]:
+        f, fp, fpp = self._f(v)
+        cos_u, sin_u = np.cos(u), np.sin(u)
+        ruu = np.array([-f * cos_u, -f * sin_u, 0.0])
+        ruv = np.array([-fp * sin_u, fp * cos_u, 0.0])
+        rvv = np.array([fpp * cos_u, fpp * sin_u, 0.0])
+        return {'ruu': ruu, 'ruv': ruv, 'rvv': rvv}
 
 class CompositeSurface(AnalyticalSurface):
     """Составная поверхность, состоящая из нескольких сегментов."""
@@ -151,3 +166,6 @@ class CompositeSurface(AnalyticalSurface):
         E_u = (E_up - E_um) / (2*eps)
         # Аналогично для остальных... Заглушка
         return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+    def second_derivatives(self, u: float, v: float) -> Dict[str, np.ndarray]:
+        seg = self._get_segment(v)
+        return seg.second_derivatives(u, v)

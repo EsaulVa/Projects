@@ -282,5 +282,6 @@ fig.update_layout(
     hovermode='closest'
 )
 
-fig.show()
+# fig.show()
+fig.write_html('winding_plot.html')
 print("Готово.")

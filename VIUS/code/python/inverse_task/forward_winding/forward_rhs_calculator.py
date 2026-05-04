@@ -138,3 +138,171 @@ class ForwardRHS:
         dv_prime_ds = gamma2 * tan_theta - geo_v
 
         return np.array([du_ds, du_prime_ds, dv_ds, dv_prime_ds])
+
+class QRegularizedForwardRHS:
+    def __init__(self, surface: AnalyticalSurface, deviation_law: DeviationLaw,
+                 q_param: float = 1.0, adaptive_q: bool = True, eps: float = 1e-12):
+        self.surface = surface
+        self.law = deviation_law
+        self.q_param = q_param
+        self.adaptive_q = adaptive_q
+        self.eps = eps
+        self._last_error: Optional[str] = None   # диагностика
+
+    @property
+    def last_error(self) -> Optional[str]:
+        return self._last_error
+
+    def _compute_second_derivatives(self, u: float, v: float,
+                                    u_prime: float, v_prime: float,
+                                    tan_theta: float) -> tuple[float, float]:
+        # Получаем первые производные и нормаль
+        try:
+            geom = self.surface.derivatives(u, v)
+        except Exception as e:
+            self._last_error = f"Ошибка получения первых производных: {e}"
+            raise
+        ru, rv, normal = geom['ru'], geom['rv'], geom['normal']
+
+        # Пытаемся получить вторые производные через специальный метод
+        try:
+            second = self.surface.second_derivatives(u, v)
+            ruu, ruv, rvv = second['ruu'], second['ruv'], second['rvv']
+        except (AttributeError, KeyError, NotImplementedError) as e:
+            self._last_error = (
+                "Поверхность не предоставляет вторые производные (second_derivatives). "
+                "Добавьте метод second_derivatives в класс поверхности."
+            )
+            raise RuntimeError(self._last_error) from e
+
+        # Касательный вектор τ и комбинация Nd
+        tau = ru * u_prime + rv * v_prime
+        Nd = ruu * u_prime**2 + 2.0 * ruv * u_prime * v_prime + rvv * v_prime**2
+
+        # Векторное произведение τ × m
+        tau_cross_m = np.cross(tau, normal)
+
+        # Матрица системы A (2×2)
+        A = np.array([
+            [np.dot(tau, ru), np.dot(tau, rv)],
+            [np.dot(ru, tau_cross_m), np.dot(rv, tau_cross_m)]
+        ])
+        b = np.array([
+            -np.dot(tau, Nd),
+            np.dot(normal, Nd) * tan_theta - np.dot(Nd, tau_cross_m)
+        ])
+
+        # Оценка обусловленности и адаптивный q
+        det_A = A[0, 0] * A[1, 1] - A[0, 1] * A[1, 0]
+        q = self.q_param
+        if self.adaptive_q:
+            norm_A = np.linalg.norm(A, 'fro')
+            cond_est = norm_A / max(abs(det_A), self.eps)
+            q = self.q_param + min(0.999, 1.0 / (cond_est + 1e-6))
+            q = min(q, 2.0)
+
+        # q-регуляризация через нормальные уравнения
+        ATA = A.T @ A
+        ATb = A.T @ b
+        diag_ATA = np.diag(np.diag(ATA))
+        reg_matrix = 2.0 * ATA + (q - 1.0) * diag_ATA
+        rhs_reg = 2.0 * ATb
+
+        try:
+            sol = np.linalg.solve(reg_matrix, rhs_reg)
+        except np.linalg.LinAlgError:
+            self._last_error = "Регуляризованная матрица вырождена, использую lstsq"
+            sol = np.linalg.lstsq(reg_matrix, rhs_reg, rcond=None)[0]
+
+        self._last_error = None
+        return sol[0], sol[1]
+
+    def __call__(self, s: float, state: np.ndarray) -> np.ndarray:
+        u, u_prime, v, v_prime = state
+
+        # Нормировка
+        E, F, G = self.surface.first_fundamental_form(u, v)
+        norm2 = E * u_prime**2 + 2.0 * F * u_prime * v_prime + G * v_prime**2
+        if norm2 > self.eps:
+            scale = 1.0 / np.sqrt(norm2)
+            u_prime *= scale
+            v_prime *= scale
+
+        tan_theta = self.law.tan_theta(s)
+
+        try:
+            u2, v2 = self._compute_second_derivatives(u, v, u_prime, v_prime, tan_theta)
+        except RuntimeError as e:
+            self._last_error = str(e)
+            raise
+
+        return np.array([u_prime, u2, v_prime, v2])
+    
+# forward_winding/delegating_forward_rhs.py
+# import numpy as np
+# from geometry.tsurfaces import AnalyticalSurface
+# from winding.deviation_law import DeviationLaw
+from solvers.linear_solver import LocalLinearSolver
+
+class DelegatingForwardRHS:
+    """
+    Правая часть системы (2.10) с делегированием решения локальной СЛАУ
+    произвольному объекту LocalLinearSolver.
+    """
+    def __init__(self,
+                 surface: AnalyticalSurface,
+                 deviation_law: DeviationLaw,
+                 linear_solver: LocalLinearSolver,
+                 eps: float = 1e-12):
+        self.surface = surface
+        self.law = deviation_law
+        self.linear_solver = linear_solver
+        self.eps = eps
+
+    def __call__(self, s: float, state: np.ndarray) -> np.ndarray:
+        u, u_prime, v, v_prime = state
+
+        # Нормировка
+        E, F, G = self.surface.first_fundamental_form(u, v)
+        norm2 = E*u_prime**2 + 2*F*u_prime*v_prime + G*v_prime**2
+        if norm2 > self.eps:
+            scale = 1.0 / np.sqrt(norm2)
+            u_prime *= scale
+            v_prime *= scale
+
+        tan_theta = self.law.tan_theta(s)
+
+        # Геометрия
+        geom = self.surface.derivatives(u, v)
+        ru = geom['ru']
+        rv = geom['rv']
+        normal = geom['normal']
+
+        # Вторые производные (обязательно наличие second_derivatives)
+        try:
+            second = self.surface.second_derivatives(u, v)
+            ruu, ruv, rvv = second['ruu'], second['ruv'], second['rvv']
+        except AttributeError:
+            raise RuntimeError(
+                "Поверхность должна предоставлять метод second_derivatives "
+                "для DelegatingForwardRHS. Добавьте его в класс поверхности."
+            )
+
+        tau = ru * u_prime + rv * v_prime
+        Nd = ruu * u_prime**2 + 2.0 * ruv * u_prime * v_prime + rvv * v_prime**2
+        tau_cross_m = np.cross(tau, normal)
+
+        # Сборка системы A x = b
+        A = np.array([
+            [np.dot(tau, ru), np.dot(tau, rv)],
+            [np.dot(ru, tau_cross_m), np.dot(rv, tau_cross_m)]
+        ])
+        b_vec = np.array([
+            -np.dot(tau, Nd),
+            np.dot(normal, Nd) * tan_theta - np.dot(Nd, tau_cross_m)
+        ])
+
+        # Делегируем решение линейной системы
+        u2, v2 = self.linear_solver.solve(A, b_vec)
+
+        return np.array([u_prime, u2, v_prime, v2])
