@@ -40,7 +40,7 @@ class ForwardWindingBuilder:
             self._rhs = rhs
         else:
             if linear_solver is None:
-                linear_solver = QRegularizedSolver()
+                linear_solver = GMRESSolver()
             self._rhs = DelegatingForwardRHS(surface, deviation_law, linear_solver, eps=eps)
 
         # Результаты
