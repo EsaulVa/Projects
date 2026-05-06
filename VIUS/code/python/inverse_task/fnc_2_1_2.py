@@ -825,7 +825,7 @@ for i in range(0, len(line_E1[:,0]), step):
 
 fig.update_layout(title='Эллипсоид → баллон (прямая + обратная задача)',
                   scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z', aspectmode='data'),
-                  width=1000, height=800)
+                  width=2000, height=1600)
 # fig.show()
 fig.write_html('winding_analytic.html')
 # fig = plt.figure(figsize=(16, 12))
