@@ -32,7 +32,19 @@ class PiecewisePolynomialRevolution(AnalyticalSurface):
         r, _, _ = self._compute_r_and_derivs(u)
         return r
 
-    def _get_segment(self, u):
+    def _get_segment(self, u):        
+        eps = 1e-2
+        if u < self.a - eps or u > self.d + eps:
+            print(u,"error")
+            raise ValueError(...)
+        if u < self.a: u = self.a
+        if u > self.d: u = self.d
+    # далее обычная логика
+        # if u < self.a or u > self.d:
+        #     import warnings
+        #     warnings.warn(f"u={u} вне диапазона, зажат", RuntimeWarning)
+        #     return 4
+        #     u = np.clip(u, self.a, self.d)
         if self.a <= u <= self.b:
             return 1
         elif self.b < u < self.c:
@@ -44,6 +56,9 @@ class PiecewisePolynomialRevolution(AnalyticalSurface):
 
     def _compute_r_and_derivs(self, u):
         seg = self._get_segment(u)
+        if seg==4:
+            u = np.clip(u, self.a, self.d)
+            seg = self._get_segment(u)
         if seg == 1:
             # нижнее днище: используем полиномы напрямую
             phi = np.polyval(self.phi_coeffs, u)
