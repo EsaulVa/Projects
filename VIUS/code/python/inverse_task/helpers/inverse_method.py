@@ -277,7 +277,11 @@ def inverse_winding_v3(surface, traj, u0, v0, count_points=300,
                 
                 u_p = u_s + du_s * dz_sub
                 v_p = v_s + dv_s * dz_sub
-                u_p = np.clip(u_p, surface.u_min, surface.u_max)
+                if hasattr(surface, 'u_min') and hasattr(surface, 'u_max'):
+                    u_p = np.clip(u_p, surface.u_min, surface.u_max)
+                if hasattr(surface, 'v_min') and hasattr(surface, 'v_max'):
+                    v_p = np.clip(v_p, surface.v_min, surface.v_max)
+                # u_p = np.clip(u_p, surface.u_min, surface.u_max)
                 # Корректор
                 u_c, v_c, Phi_c, nit, conv = newton_corrector(
                     surface, traj, u_p, v_p, z_b,
@@ -477,7 +481,11 @@ def inverse_winding_v4(surface, traj, u0, v0, count_points=300,
                 
                 u_p = u_s + du_s * dz_sub
                 v_p = v_s + dv_s * dz_sub
-                u_p = np.clip(u_p, surface.u_min, surface.u_max)
+                # u_p = np.clip(u_p, surface.u_min, surface.u_max)
+                if hasattr(surface, 'u_min') and hasattr(surface, 'u_max'):
+                    u_p = np.clip(u_p, surface.u_min, surface.u_max)
+                if hasattr(surface, 'v_min') and hasattr(surface, 'v_max'):
+                    v_p = np.clip(v_p, surface.v_min, surface.v_max)
                 
                 u_c, v_c, Phi_c, nit, conv = newton_corrector(
                     surface, traj, u_p, v_p, z_b,

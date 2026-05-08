@@ -23,6 +23,17 @@ for dirname, _, filenames in os.walk('/kaggle/input'):
 import abc
 import numpy as np
 from typing import Tuple,Dict
+from helpers.inverse_method import newton_corrector
+class FixedPointTrajectory:
+    def __init__(self, point):
+        self.point = np.asarray(point, dtype=float)
+        self.total_length = 1.0   # любое положительное
+
+    def R(self, z):
+        return self.point
+
+    def R_deriv(self, z):
+        return np.zeros(3)
 
 class SurfaceBase(abc.ABC):
     @abc.abstractmethod
@@ -127,7 +138,40 @@ class AnalyticalSurface(SurfaceBase):
     
     def normal(self, u: float, v: float) -> np.ndarray:
         return self.derivatives(u, v)['normal']
-
+    def project_point(self, point, u0_guess, v0_guess,
+                        eps_Phi=1e-10, max_iter=20):
+            """
+            Находит криволинейные координаты (u, v) на поверхности,
+            при которых луч из point в r(u, v) касается поверхности (Φ = 0).
+            
+            Параметры
+            ----------
+            point : array-like (3,)
+                Точка в пространстве, которую нужно спроецировать.
+            u0_guess, v0_guess : float
+                Начальное приближение для итераций Ньютона.
+            eps_Phi : float
+                Точность по невязке Φ.
+            max_iter : int
+                Максимальное число итераций корректора.
+                
+            Возвращает
+            ----------
+            u, v : float
+                Найденные координаты на поверхности.
+            Phi : float
+                Достигнутая невязка.
+            converged : bool
+                Истина, если корректор сошёлся.
+            """
+            from helpers.inverse_method import newton_corrector
+            
+            dummy_traj = FixedPointTrajectory(point)
+            u_c, v_c, Phi_c, nit, conv = newton_corrector(
+                self, dummy_traj, u0_guess, v0_guess, 0.0,
+                eps_Phi=eps_Phi, max_iter=max_iter
+            )
+            return u_c, v_c, Phi_c, conv
 # =====================================================================
 # КОНКРЕТНЫЕ АНАЛИТИЧЕСКИЕ ПОВЕРХНОСТИ
 # =====================================================================
