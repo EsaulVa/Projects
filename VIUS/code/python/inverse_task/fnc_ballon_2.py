@@ -4,14 +4,14 @@ from core.const_dev_law import ConstantDeviation
 from forward_winding.forward_winding_builder import ForwardWindingBuilder
 from core.trajectory import Trajectory
 from solvers.scipy_solver import SciPySolver
-from helpers.inverse_method import inverse_winding_v3, newton_corrector
+from helpers.inverse_method import inverse_winding_v3, newton_corrector,inverse_winding_v4
 from geometry.tsurfaces import  FixedPointTrajectory
 import plotly.graph_objects as go
 from scipy.interpolate import CubicSpline
 import scipy.io as sio
-
+from core.exceptions import GeometryOutOfBoundsError
 # 1. Внешний баллон E1 (поверхность безопасности)
-R1, L1 = 5.0, 6.0
+R1, L1 = 6.0, 8.0
 z1_min, z1_max = -L1/2, L1/2
 cyl1 = CylinderSegment(R1, z1_min, z1_max)
 E1 = CompositeSurface([SphereSegment(R1, z1_min, is_upper=False),
@@ -19,7 +19,7 @@ E1 = CompositeSurface([SphereSegment(R1, z1_min, is_upper=False),
                        SphereSegment(R1, z1_max, is_upper=True)])
 
 # 2. Прямая задача на E1 (траектория точки схода)
-dev_law = ConstantDeviation(tan_theta=0.1)
+dev_law = ConstantDeviation(tan_theta=0)
 fwd_builder = ForwardWindingBuilder(
     surface=E1, deviation_law=dev_law,
     solver=SciPySolver(method='BDF', rtol=1e-8, atol=1e-10),
@@ -33,10 +33,10 @@ fwd_builder = ForwardWindingBuilder(
 # u0_ext = np.arctan2(y0, x0)
 # v0_ext = z0
 # Начальная точка на внешнем баллоне (выбираем так, чтобы она была выше дна внутреннего)
-u0_ext = 0
-v0_ext = -np.pi/5        # середина цилиндрической части внешнего баллона
-alpha = 30*np.pi / 180       # 30°
-s_end = 50.0
+u0_ext = -4
+v0_ext = 0.01       # середина цилиндрической части внешнего баллона
+alpha = 60*np.pi / 180       # 30°
+s_end = 45.0
 s_eval = np.linspace(0, s_end, 200)
 
 print("Прямая задача на внешнем баллоне…")
@@ -52,7 +52,7 @@ traj = Trajectory.from_points(line_E1, method='cubic', bc_type='natural')
 print(f"Длина траектории: {traj.total_length:.3f}")
 
 # 3. Внутренний баллон E2 (оправка)
-R2, L2 = 4, 6.0
+R2, L2 = 4, 8
 z2_min, z2_max = -L2/2, L2/2
 cyl2 = CylinderSegment(R2, z2_min, z2_max)
 E2 = CompositeSurface([SphereSegment(R2, z2_min, is_upper=False),
@@ -102,7 +102,7 @@ else:
 print(f"После коррекции: u={u0_int:.4f}, v={v0_int:.4f}, Φ={Phi0:.2e}, сходимость={conv}")
 
 # 5. Обратная задача на E2
-result = inverse_winding_v3(
+result = inverse_winding_v4(
     E2, traj, u0_int, v0_int,
     count_points=300,
     eps_Phi=1e-10, max_newton=7, max_bisect=4, jump_threshold=3.0

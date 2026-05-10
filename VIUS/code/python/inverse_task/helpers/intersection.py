@@ -1,0 +1,168 @@
+# ======================================================================
+# 1. ИНТЕРФЕЙС АЛГОРИТМА ПЕРЕСЕЧЕНИЯ ЛУЧА
+# ======================================================================
+import numpy as np
+from abc import ABC, abstractmethod
+from geometry.tsurfaces import *
+
+class IntersectionAlgorithm(ABC):
+    """Стратегия поиска пересечения луча с конкретным типом поверхности."""
+    
+    @abstractmethod
+    def intersect(self, surface, origin, direction, t_min, t_max):
+        """
+        Параметры
+        ----------
+        surface : объект поверхности (CylinderAnalytical, SphereSegment, Ellipsoid и т.д.)
+        origin : np.ndarray (3,)
+        direction : np.ndarray (3,) – единичный вектор луча
+        t_min, t_max : float – допустимый диапазон параметра t
+        
+        Возвращает
+        ----------
+        (t, point) или (None, None), если пересечение не найдено
+        """
+        pass
+
+
+# ======================================================================
+# 2. АНАЛИТИЧЕСКИЕ РЕАЛИЗАЦИИ ДЛЯ КОНКРЕТНЫХ ПОВЕРХНОСТЕЙ
+# ======================================================================
+
+class CylinderIntersection(IntersectionAlgorithm):
+    def intersect(self, surface, origin, direction, t_min, t_max):
+        ro, rd = np.asarray(origin, dtype=float), np.asarray(direction, dtype=float)
+        R = surface.R
+        a = rd[0]**2 + rd[1]**2
+        b = 2 * (ro[0]*rd[0] + ro[1]*rd[1])
+        c = ro[0]**2 + ro[1]**2 - R**2
+        if abs(a) < 1e-12: return None, None
+        D = b*b - 4*a*c
+        if D < 0: return None, None
+        sqrtD = np.sqrt(D)
+        t1 = (-b - sqrtD) / (2*a)
+        t2 = (-b + sqrtD) / (2*a)
+        for t in sorted([t1, t2]):
+            if t < t_min or t > t_max: continue
+            pt = ro + t * rd
+            z_min = getattr(surface, 'z_min', -np.inf)
+            z_max = getattr(surface, 'z_max',  np.inf)
+            if z_min <= pt[2] <= z_max:
+                return t, pt
+        return None, None
+
+
+class SphereIntersection(IntersectionAlgorithm):
+    def intersect(self, surface, origin, direction, t_min, t_max):
+        ro, rd = np.asarray(origin, dtype=float), np.asarray(direction, dtype=float)
+        R = surface.radius
+        z0 = getattr(surface, 'z0', 0.0)
+        ro_shifted = ro - np.array([0, 0, z0])
+        a = rd[0]**2 + rd[1]**2 + rd[2]**2
+        b = 2 * np.dot(ro_shifted, rd)
+        c = np.dot(ro_shifted, ro_shifted) - R**2
+        if abs(a) < 1e-12: return None, None
+        D = b*b - 4*a*c
+        if D < 0: return None, None
+        sqrtD = np.sqrt(D)
+        t1 = (-b - sqrtD) / (2*a)
+        t2 = (-b + sqrtD) / (2*a)
+        for t in sorted([t1, t2]):
+            if t < t_min or t > t_max: continue
+            pt = ro + t * rd
+            z_min = getattr(surface, 'z_min', -np.inf)
+            z_max = getattr(surface, 'z_max',  np.inf)
+            if z_min <= pt[2] <= z_max:
+                return t, pt
+        return None, None
+
+
+class EllipsoidIntersection(IntersectionAlgorithm):
+    def intersect(self, surface, origin, direction, t_min, t_max):
+        ro, rd = np.asarray(origin, dtype=float), np.asarray(direction, dtype=float)
+        a, b, c = surface.a, surface.b, surface.c
+        def f(t):
+            pt = ro + t * rd
+            return (pt[0]/a)**2 + (pt[1]/b)**2 + (pt[2]/c)**2 - 1.0
+        try:
+            from scipy.optimize import root_scalar
+            sol = root_scalar(f, bracket=[t_min, t_max], method='brentq', xtol=1e-8)
+            if sol.converged:
+                t = sol.root
+                if t_min <= t <= t_max:
+                    return t, ro + t * rd
+        except (ValueError, RuntimeError):
+            pass
+        return None, None
+
+class RevolutionIntersection(IntersectionAlgorithm):
+    def intersect(self, surface, origin, direction, t_min, t_max):
+        ro, rd = np.asarray(origin, dtype=float), np.asarray(direction, dtype=float)
+        def f(t):
+            pt = ro + t * rd
+            r_ray = np.hypot(pt[0], pt[1])
+            r_surf = surface.radius(pt[2])   # образующая на высоте z
+            return r_ray - r_surf
+        try:
+            from scipy.optimize import root_scalar
+            sol = root_scalar(f, bracket=[t_min, t_max], method='brentq', xtol=1e-8)
+            if sol.converged:
+                t = sol.root
+                if t_min <= t <= t_max:
+                    return t, ro + t * rd
+        except (ValueError, RuntimeError):
+            pass
+        return None, None
+
+
+# ======================================================================
+# 3. РЕЕСТР АЛГОРИТМОВ И ТРАССИРОВЩИК
+# ======================================================================
+class RayTracer:
+    def __init__(self):
+        self.algorithms = {}
+
+    def register(self, surface_class, algorithm):
+        self.algorithms[surface_class] = algorithm
+
+    def trace(self, surface, origin, direction, t_min=1e-6, t_max=1e6):
+        # Составная поверхность – перебираем сегменты
+        if hasattr(surface, 'segments'):
+            best_t, best_point = None, None
+            for seg in surface.segments:
+                algo = self.algorithms.get(type(seg))
+                if algo is None: continue
+                t, pt = algo.intersect(seg, origin, direction, t_min, t_max)
+                if t is not None and (best_t is None or t < best_t):
+                    best_t, best_point = t, pt
+            return best_t, best_point
+        # Цельная поверхность
+        algo = self.algorithms.get(type(surface))
+        if algo:
+            return algo.intersect(surface, origin, direction, t_min, t_max)
+        return None, None
+
+
+# ======================================================================
+# 4. МЕТОД uv_from_point ДЛЯ ПОВЕРХНОСТЕЙ (примеры)
+# ======================================================================
+# Эти методы уже должны быть в классах поверхностей.
+# Для полноты приведём их здесь.
+
+# class CylinderAnalytical:
+#     ...
+#     def uv_from_point(self, point):
+#         return np.arctan2(point[1], point[0]), point[2]
+
+# class SphereSegment:
+#     ...
+#     def uv_from_point(self, point):
+#         return np.arctan2(point[1], point[0]), point[2]
+
+# class EllipsoidWithDerivatives:
+#     ...
+#     def uv_from_point(self, point):
+#         x, y, z = point
+#         theta = np.arccos(z / self.c)
+#         phi = np.arctan2(y, x)
+#         return theta, phi

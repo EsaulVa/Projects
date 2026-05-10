@@ -90,3 +90,8 @@ class EllipsoidWithDerivatives(AnalyticalSurface):
         ruv = jnp.array([ a * sin_u * sin_v, -b * cos_u * sin_v, 0.0])
         rvv = jnp.array([-a * cos_u * cos_v, -b * sin_u * cos_v, -c * sin_v])
         return {'ruu': ruu, 'ruv': ruv, 'rvv': rvv}
+    def uv_from_point(self, point):
+        x, y, z = point
+        theta = np.arccos(z / self.c)
+        phi = np.arctan2(y, x)
+        return theta, phi

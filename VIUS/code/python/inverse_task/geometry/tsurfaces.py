@@ -24,6 +24,7 @@ import abc
 import numpy as np
 from typing import Tuple,Dict
 from helpers.inverse_method import newton_corrector
+
 class FixedPointTrajectory:
     def __init__(self, point):
         self.point = np.asarray(point, dtype=float)
@@ -83,32 +84,7 @@ class SurfaceBase(abc.ABC):
             # Если производные не предоставлены, можно вычислить численно (JAX) или вызвать исключение
             raise NotImplementedError("Поверхность должна предоставлять metric_derivatives")
         return self.compute_christoffel_symbols(E, F, G, E_u, E_v, F_u, F_v, G_u, G_v)
-    # @staticmethod
-    # def compute_christoffel_symbols(E, F, G, E_u, E_v, F_u, F_v, G_u, G_v):
-    #     det = E * G - F**2
-    #     inv_det = 1.0 / det
-        
-    #     # Компоненты обратной метрики (контравариантный тензор)
-    #     g11 = G * inv_det
-    #     g12 = -F * inv_det
-    #     g22 = E * inv_det
-
-    #     # Прямая подстановка в классические формулы
-    #     Gamma = jnp.zeros((2, 2, 2))
-        
-    #     # Gamma^1_{ij}
-    #     Gamma = Gamma.at[0, 0, 0].set(0.5 * g11 * E_u + g12 * (F_u - 0.5 * E_v))
-    #     Gamma = Gamma.at[0, 0, 1].set(0.5 * g11 * F_u + 0.5 * g12 * (2 * F_v - G_u))
-    #     Gamma = Gamma.at[0, 1, 0].set(Gamma[0, 0, 1]) # Симметрия
-    #     Gamma = Gamma.at[0, 1, 1].set(0.5 * g11 * (2 * F_v - G_u) + 0.5 * g12 * G_v)
-        
-    #     # Gamma^2_{ij}
-    #     Gamma = Gamma.at[1, 0, 0].set(0.5 * g12 * E_u + 0.5 * g22 * (2 * F_u - E_v))
-    #     Gamma = Gamma.at[1, 0, 1].set(g12 * (F_u - 0.5 * E_v) + g22 * (G_u - F_v))
-    #     Gamma = Gamma.at[1, 1, 0].set(Gamma[1, 0, 1]) # Симметрия
-    #     Gamma = Gamma.at[1, 1, 1].set(0.5 * g12 * (2 * F_v - G_u) + 0.5 * g22 * G_v)
-        
-    #     return Gamma
+    
 
 # =====================================================================
 # ПРОМЕЖУТОЧНЫЙ КЛАСС ДЛЯ ПОВЕРХНОСТЕЙ С АНАЛИТИЧЕСКИМИ ПРОИЗВОДНЫМИ
@@ -118,7 +94,10 @@ class AnalyticalSurface(SurfaceBase):
     Расширяет базовый интерфейс, требуя явного предоставления векторов 
     производных ru и rv. Это необходимо для расчета правых частей системы (3.41).
     """
-    
+    @abc.abstractmethod
+    def uv_from_point(self, point):
+        """Преобразует декартову точку (лежащую на поверхности) в параметрические координаты (u, v)."""
+        pass
     @abc.abstractmethod
     def derivatives(self, u: float, v: float) -> Dict[str, np.ndarray]:
         """
@@ -390,5 +369,6 @@ class EllipsoidAnalytical(SurfaceBase):
             b * jnp.sin(u) * jnp.cos(v),
             c * jnp.sin(v)
         ])
+    
 
 # Расширенный интерфейс поверхностей

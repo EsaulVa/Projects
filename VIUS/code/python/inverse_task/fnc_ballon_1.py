@@ -4,7 +4,7 @@ from core.const_dev_law import ConstantDeviation
 from forward_winding.forward_winding_builder import ForwardWindingBuilder
 from core.trajectory import Trajectory
 from solvers.scipy_solver import SciPySolver
-from helpers.inverse_method import inverse_winding_v3, newton_corrector
+from helpers.inverse_method import inverse_winding_v3, newton_corrector,inverse_winding_v4
 
 # 1. Создаём внутренний баллон E_int (оправка) и внешний E_ext (безопасность)
 R_int, L_int = 2, 6
@@ -85,7 +85,7 @@ else:
     u0, v0 = u0_guess, v0_guess
 # 4. Обратная задача на внешнем баллоне
 print("Обратная задача на внешнем баллоне...")
-result = inverse_winding_v3(
+result = inverse_winding_v4(
     E_ext, traj, u0_ext, v0_ext,
     count_points=1300,
     eps_Phi=1e-10, max_newton=7, max_bisect=4, jump_threshold=3.0

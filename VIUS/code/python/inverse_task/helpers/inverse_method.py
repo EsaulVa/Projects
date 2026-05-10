@@ -402,7 +402,7 @@ def inverse_winding_v4(surface, traj, u0, v0, count_points=300,
         pred_ok = False
         try:
             sol = solve_ivp(rhs, [z_k, z_next], [u_cur, v_cur],
-                            method='BDF', rtol=rtol, atol=atol,
+                            method='Radau', rtol=rtol, atol=atol,
                             max_step=max_step)
             if sol.success:
                 u_pred = sol.y[0, -1]
@@ -548,3 +548,4 @@ def inverse_winding_v4(surface, traj, u0, v0, count_points=300,
         'lam': lam_hist, 'flags': flags,
         'points_3d': points_3d
     }
+

@@ -33,6 +33,8 @@ class CylinderAnalytical(AnalyticalSurface):
         rv = jnp.array([0.0, 0.0, 1.0])
         normal = jnp.array([cos_u, sin_u, 0.0])
         return {'r': r, 'ru': ru, 'rv': rv, 'normal': normal}
+    def uv_from_point(self, point):
+         return np.arctan2(point[1], point[0]), point[2]
 
 
 class CylinderWithDerivatives(AnalyticalSurface):
@@ -58,3 +60,5 @@ class CylinderWithDerivatives(AnalyticalSurface):
 
     def derivatives(self, u, v) -> Dict[str, jnp.ndarray]:
         return self._cylinder.derivatives(u, v)
+    def uv_from_point(self, point):
+         return self._cylinder.uv_from_point(point)

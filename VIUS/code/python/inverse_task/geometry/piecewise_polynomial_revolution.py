@@ -2,6 +2,7 @@ import numpy as np
 from numpy.polynomial import polynomial as P  # не обязательно, можно через polyval
 from typing import Dict, Tuple
 from geometry.tsurfaces import AnalyticalSurface
+from core.exceptions import *
 
 class PiecewisePolynomialRevolution(AnalyticalSurface):
     def __init__(self, phi_coeffs, R_coeffs, segment_bounds, cylinder_radius):
@@ -52,7 +53,7 @@ class PiecewisePolynomialRevolution(AnalyticalSurface):
         elif self.c <= u <= self.d:
             return 3
         else:
-            raise ValueError(f"u={u} вне диапазона [{self.a}, {self.d}]")
+            raise GeometryOutOfBoundsError('u', u, (self.a, self.d))
 
     def _compute_r_and_derivs(self, u):
         seg = self._get_segment(u)
@@ -139,3 +140,9 @@ class PiecewisePolynomialRevolution(AnalyticalSurface):
     def metric_derivatives(self, u, v):
         # Для простоты вернём нули, если не используем
         return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+    
+    def uv_from_point(self, point):
+        x, y, z = point
+        v = np.arctan2(y, x)
+        u = z
+        return u, v

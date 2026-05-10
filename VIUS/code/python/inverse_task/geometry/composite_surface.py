@@ -1,6 +1,7 @@
 import numpy as np
 from typing import Dict, Tuple
 from geometry.tsurfaces import AnalyticalSurface
+from core.exceptions import GeometryOutOfBoundsError
 
 class SurfaceSegment:
     """Базовый класс для сегмента составной поверхности."""
@@ -53,6 +54,12 @@ class CylinderSegment(SurfaceSegment):
         ruv = np.array([0.0, 0.0, 0.0])
         rvv = np.array([0.0, 0.0, 0.0])
         return {'ruu': ruu, 'ruv': ruv, 'rvv': rvv}
+    
+    def uv_from_point(self, point):
+        x, y, z = point
+        u = np.arctan2(y, x)
+        v = z
+        return u, v
 
 class SphereSegment(SurfaceSegment):
     def __init__(self, R: float, z0: float, is_upper: bool):
@@ -121,6 +128,8 @@ class SphereSegment(SurfaceSegment):
         ruv = np.array([-fp * sin_u, fp * cos_u, 0.0])
         rvv = np.array([fpp * cos_u, fpp * sin_u, 0.0])
         return {'ruu': ruu, 'ruv': ruv, 'rvv': rvv}
+    def uv_from_point(self, point):
+        return np.arctan2(point[1], point[0]), point[2]
 
 class CompositeSurface(AnalyticalSurface):
     """Составная поверхность, состоящая из нескольких сегментов."""
@@ -133,7 +142,8 @@ class CompositeSurface(AnalyticalSurface):
         for seg in self.segments:
             if seg.contains(v):
                 return seg
-        raise ValueError(f"v={v} вне диапазона [{self.v_min}, {self.v_max}]")
+        # raise ValueError(f"v={v} вне диапазона [{self.v_min}, {self.v_max}]")
+        raise GeometryOutOfBoundsError('v', v, (self.v_min, self.v_max))
 
     def position(self, u: float, v: float) -> np.ndarray:
         seg = self._get_segment(v)
@@ -169,3 +179,9 @@ class CompositeSurface(AnalyticalSurface):
     def second_derivatives(self, u: float, v: float) -> Dict[str, np.ndarray]:
         seg = self._get_segment(v)
         return seg.second_derivatives(u, v)
+    def uv_from_point(self, point):
+        # Определяем сегмент по высоте (Z-координате)
+        for seg in self.segments:
+            if seg.contains(point[2]):
+                return seg.uv_from_point(point)
+        raise GeometryOutOfBoundsError('z', point[2], (self.v_min, self.v_max))
