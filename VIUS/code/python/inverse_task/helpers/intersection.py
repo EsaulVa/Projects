@@ -32,7 +32,7 @@ class IntersectionAlgorithm(ABC):
 class CylinderIntersection(IntersectionAlgorithm):
     def intersect(self, surface, origin, direction, t_min, t_max):
         ro, rd = np.asarray(origin, dtype=float), np.asarray(direction, dtype=float)
-        R = surface.R
+        R = surface.R  # у CylinderSegment радиус хранится в R
         a = rd[0]**2 + rd[1]**2
         b = 2 * (ro[0]*rd[0] + ro[1]*rd[1])
         c = ro[0]**2 + ro[1]**2 - R**2
@@ -45,18 +45,17 @@ class CylinderIntersection(IntersectionAlgorithm):
         for t in sorted([t1, t2]):
             if t < t_min or t > t_max: continue
             pt = ro + t * rd
-            z_min = getattr(surface, 'z_min', -np.inf)
-            z_max = getattr(surface, 'z_max',  np.inf)
-            if z_min <= pt[2] <= z_max:
+            # проверяем, попадает ли точка в диапазон высот сегмента
+            if surface.z_min <= pt[2] <= surface.z_max:
                 return t, pt
         return None, None
-
 
 class SphereIntersection(IntersectionAlgorithm):
     def intersect(self, surface, origin, direction, t_min, t_max):
         ro, rd = np.asarray(origin, dtype=float), np.asarray(direction, dtype=float)
-        R = surface.radius
-        z0 = getattr(surface, 'z0', 0.0)
+        R = surface.R
+        z0 = surface.z0
+        z_min, z_max = surface.z_min, surface.z_max
         ro_shifted = ro - np.array([0, 0, z0])
         a = rd[0]**2 + rd[1]**2 + rd[2]**2
         b = 2 * np.dot(ro_shifted, rd)
@@ -70,12 +69,9 @@ class SphereIntersection(IntersectionAlgorithm):
         for t in sorted([t1, t2]):
             if t < t_min or t > t_max: continue
             pt = ro + t * rd
-            z_min = getattr(surface, 'z_min', -np.inf)
-            z_max = getattr(surface, 'z_max',  np.inf)
             if z_min <= pt[2] <= z_max:
                 return t, pt
         return None, None
-
 
 class EllipsoidIntersection(IntersectionAlgorithm):
     def intersect(self, surface, origin, direction, t_min, t_max):

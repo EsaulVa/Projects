@@ -21,7 +21,7 @@ from helpers.intersection import CylinderIntersection, SphereIntersection
 # ----------------------------------------------------------------------
 # 1. Внешний баллон E1 (поверхность безопасности)
 # ----------------------------------------------------------------------
-R1, L1 = 6.0, 7.0
+R1, L1 = 2, 6
 z1_min, z1_max = -L1/2, L1/2
 cyl1 = CylinderSegment(R1, z1_min, z1_max)
 E1 = CompositeSurface([SphereSegment(R1, z1_min, is_upper=False),
@@ -31,17 +31,17 @@ E1 = CompositeSurface([SphereSegment(R1, z1_min, is_upper=False),
 # ----------------------------------------------------------------------
 # 2. Прямая задача на E1 – траектория точки схода
 # ----------------------------------------------------------------------
-dev_law = ConstantDeviation(tan_theta=0)
+dev_law = ConstantDeviation(tan_theta=-0.1)
 fwd_builder = ForwardWindingBuilder(
     surface=E1, deviation_law=dev_law,
     solver=SciPySolver(method='BDF', rtol=1e-8, atol=1e-10),
     normalize_tangent=True, eps=1e-12
 )
 
-u0_ext = -6
-v0_ext = 0.01
-alpha = 70*np.pi / 180
-s_end = 50.0
+u0_ext = 0
+v0_ext = E1.v_min+3
+alpha = 60*np.pi / 180
+s_end = 15
 s_eval = np.linspace(0, s_end, 200)
 
 print("Прямая задача на внешнем баллоне…")
@@ -59,7 +59,7 @@ print(f"Длина траектории: {traj.total_length:.3f}")
 # ----------------------------------------------------------------------
 # 3. Внутренний баллон E2 (оправка)
 # ----------------------------------------------------------------------
-R2, L2 = 4.0, 8.0
+R2, L2 = 1.5, 5
 z2_min, z2_max = -L2/2, L2/2
 cyl2 = CylinderSegment(R2, z2_min, z2_max)
 E2 = CompositeSurface([SphereSegment(R2, z2_min, is_upper=False),
@@ -94,7 +94,7 @@ print(f"После коррекции: u={u0_int:.4f}, v={v0_int:.4f}, Φ={Phi0:
 # ----------------------------------------------------------------------
 # 5. Настройка предикторов
 # ----------------------------------------------------------------------
-solver_dae = SciPySolver(method='DOP853', rtol=1e-8, atol=1e-10)
+solver_dae = SciPySolver(method='BDF', rtol=1e-8, atol=1e-10)
 dae_predictor = DAEPredictor(solver_dae)
 
 ray_tracer = RayTracer()
@@ -107,7 +107,7 @@ optical_predictor = OpticalPredictor(ray_tracer)
 # ----------------------------------------------------------------------
 result = inverse_winding_hybrid(
     E2, traj, u0_int, v0_int,
-    count_points=300,
+    count_points=30,
     eps_Phi=1e-10, max_newton=7, max_bisect=4, jump_threshold=3.0,
     predictor_dae=dae_predictor,
     predictor_optical=optical_predictor,
