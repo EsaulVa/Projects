@@ -31,17 +31,17 @@ E1 = CompositeSurface([SphereSegment(R1, z1_min, is_upper=False),
 # ----------------------------------------------------------------------
 # 2. Прямая задача на E1 – траектория точки схода
 # ----------------------------------------------------------------------
-dev_law = ConstantDeviation(tan_theta=-0.1)
+dev_law = ConstantDeviation(tan_theta=0.1)
 fwd_builder = ForwardWindingBuilder(
     surface=E1, deviation_law=dev_law,
     solver=SciPySolver(method='BDF', rtol=1e-8, atol=1e-10),
     normalize_tangent=True, eps=1e-12
 )
 
-u0_ext = 0
-v0_ext = E1.v_min+3
-alpha = 60*np.pi / 180
-s_end = 15
+u0_ext = 0.1
+v0_ext = E1.v_max-6
+alpha = 85*np.pi / 180
+s_end = 27
 s_eval = np.linspace(0, s_end, 200)
 
 print("Прямая задача на внешнем баллоне…")
@@ -79,6 +79,8 @@ if abs(v0_ext) <= L2/2:
 else:
     u_guess = u0_ext
     v_guess = np.clip(R0[2], E2.v_min, E2.v_max)
+# u_guess=u0_ext
+# v_guess=v0_ext
 
 print(f"Начальное приближение: u={u_guess:.4f}, v={v_guess:.4f}")
 
@@ -94,7 +96,7 @@ print(f"После коррекции: u={u0_int:.4f}, v={v0_int:.4f}, Φ={Phi0:
 # ----------------------------------------------------------------------
 # 5. Настройка предикторов
 # ----------------------------------------------------------------------
-solver_dae = SciPySolver(method='BDF', rtol=1e-8, atol=1e-10)
+solver_dae = SciPySolver(method='RK45', rtol=1e-8, atol=1e-10)
 dae_predictor = DAEPredictor(solver_dae)
 
 ray_tracer = RayTracer()
@@ -107,7 +109,7 @@ optical_predictor = OpticalPredictor(ray_tracer)
 # ----------------------------------------------------------------------
 result = inverse_winding_hybrid(
     E2, traj, u0_int, v0_int,
-    count_points=30,
+    count_points=200,
     eps_Phi=1e-10, max_newton=7, max_bisect=4, jump_threshold=3.0,
     predictor_dae=dae_predictor,
     predictor_optical=optical_predictor,
@@ -170,12 +172,12 @@ if r_etalon is not None:
                                name='Эталонная ЛУ'))
 
 # Соединительные отрезки
-step = 20
+step = 2
 for i in range(0, len(z_vals), step):
     R_pt = traj.R(z_vals[i])
     r_pt = line_E2[i]
     fig.add_trace(go.Scatter3d(x=[R_pt[0], r_pt[0]], y=[R_pt[1], r_pt[1]], z=[R_pt[2], r_pt[2]],
-                               mode='lines', line=dict(color='green', width=1, dash='dot'),
+                               mode='lines', line=dict(color='green', width=2, dash='solid'),
                                showlegend=False))
 
 # Начальные и конечные точки
