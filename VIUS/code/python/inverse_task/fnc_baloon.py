@@ -42,8 +42,8 @@ points_tsn = np.column_stack([X, Y, Z_local])
 count_points=len(X)
 
 print(f"z_offset = {z_offset:.3f} мм")
-# traj = Trajectory.from_points(points_tsn, method='cubic')
-traj = Trajectory.from_points(points_tsn, method='nurbs',degree=4)
+traj = Trajectory.from_points(points_tsn, method='cubic')
+# traj = Trajectory.from_points(points_tsn, method='nurbs',degree=4)
 import scipy.io as sio
 
 # Загружаем эталонную линию укладки из l.mat
@@ -96,7 +96,7 @@ print("\n===== Обратная задача: восстановление ли�
 # 8. ЗАПУСК ОБРАТНОЙ ЗАДАЧИ
 # ======================================================================
 
-count_points = 50000
+count_points = 50
 
 print(f"\n===== Обратная задача v3 ({count_points} точек) =====")
 u0_mandrel=u0

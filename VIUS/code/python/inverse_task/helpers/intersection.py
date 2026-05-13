@@ -110,6 +110,52 @@ class RevolutionIntersection(IntersectionAlgorithm):
             pass
         return None, None
 
+class RobustRevolutionIntersection(IntersectionAlgorithm):
+    def intersect(self, surface, origin, direction, t_min=1e-6, t_max=1e6, n_steps=1000):
+        ro, rd = np.asarray(origin, dtype=float), np.asarray(direction, dtype=float)
+        
+        def signed_distance(t):
+            pt = ro + t * rd
+            r_ray = np.hypot(pt[0], pt[1])
+            # Проверяем, что высота pt[2] находится в пределах поверхности
+            if hasattr(surface, 'v_min') and hasattr(surface, 'v_max'):
+                if pt[2] < surface.v_min or pt[2] > surface.v_max:
+                    return -1e9  # далеко от поверхности, отрицательное, чтобы не было ложного пересечения
+            r_surf = surface.radius(pt[2])
+            return r_ray - r_surf
+        
+        # Шаг 1: ищем интервал, где функция меняет знак
+        dt = (t_max - t_min) / n_steps
+        t_prev = t_min
+        f_prev = signed_distance(t_prev)
+        
+        for i in range(1, n_steps + 1):
+            t_curr = t_min + i * dt
+            f_curr = signed_distance(t_curr)
+            if abs(f_curr) < 1e-12:  # прямое попадание
+                pt = ro + t_curr * rd
+                if hasattr(surface, 'v_min') and (pt[2] < surface.v_min or pt[2] > surface.v_max):
+                    continue
+                return t_curr, pt
+            if f_prev * f_curr < 0:  # смена знака
+                # Уточняем корень бисекцией
+                lo, hi = t_prev, t_curr
+                for _ in range(50):
+                    mid = (lo + hi) / 2
+                    f_mid = signed_distance(mid)
+                    if abs(f_mid) < 1e-12 or hi - lo < 1e-12:
+                        break
+                    if f_prev * f_mid < 0:
+                        hi = mid
+                    else:
+                        lo = mid
+                        f_prev = f_mid
+                t = (lo + hi) / 2
+                pt = ro + t * rd
+                return t, pt
+            t_prev, f_prev = t_curr, f_curr
+        
+        return None, None
 
 # ======================================================================
 # 3. РЕЕСТР АЛГОРИТМОВ И ТРАССИРОВЩИК

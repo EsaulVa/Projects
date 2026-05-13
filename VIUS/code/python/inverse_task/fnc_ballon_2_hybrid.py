@@ -122,6 +122,9 @@ z_vals = result['z_eval']
 line_E2 = result['points_3d']
 Phi_hist = result['Phi']
 print(f"Максимальная невязка |Φ| = {np.max(np.abs(Phi_hist)):.2e}")
+print(f"Минимальная невязка Phi: {np.min(result['Phi']):.4f}")
+print(f"Максимальная невязка Phi: {np.max(result['Phi']):.4f}")
+print(f"Средняя невязка Phi: {np.mean(np.abs(result['Phi'])):.4f}")
 
 # ----------------------------------------------------------------------
 # 7. Визуализация (как в исходном скрипте)
