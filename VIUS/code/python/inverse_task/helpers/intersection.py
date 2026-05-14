@@ -26,6 +26,60 @@ class IntersectionAlgorithm(ABC):
 
 
 # ======================================================================
+# 2. ЧИСТАЯ АЛЬТЕРНАТИВА: Численный алгоритм-стратегия
+# ======================================================================
+from scipy.optimize import brentq
+class PiecewisePolynomialIntersection(IntersectionAlgorithm):
+    """
+    Чистая стратегия пересечения для поверхностей вида PiecewisePolynomialRevolution.
+    Не вторгается в класс поверхности. Использует численный поиск корня уравнения
+    R_ray(z) - R_surf(z) = 0 со сканированием интервала для robustness.
+    """
+    def intersect(self, surface, origin, direction, t_min, t_max, sweep_steps=200):
+        ro = np.asarray(origin, dtype=float)
+        rd = np.asarray(direction, dtype=float)
+        
+        def get_R_surf(z):
+            # Уважаем границы поверхности
+            if hasattr(surface, 'u_min') and (z < surface.u_min or z > surface.u_max):
+                return None
+            # Берем радиус на высоте z при угле v=0
+            pt = surface.position(z, 0.0)
+            return np.hypot(pt[0], pt[1])
+                
+        def objective(t):
+            pt = ro + t * rd
+            R_surf = get_R_surf(pt[2])
+            if R_surf is None: 
+                return 1e9 # Штраф за выход за пределы высоты
+            R_ray = np.hypot(pt[0], pt[1])
+            return R_ray - R_surf
+
+        # Сканирование: ищем интервал, где функция меняет знак
+        dt = (t_max - t_min) / sweep_steps
+        t_prev, f_prev = t_min, objective(t_min)
+        
+        for i in range(1, sweep_steps + 1):
+            t_curr = t_min + i * dt
+            f_curr = objective(t_curr)
+            
+            if abs(f_curr) < 1e-8: # Прямое попадание
+                return t_curr, ro + t_curr * rd
+                
+            if f_prev * f_curr < 0: # Нашли смену знака - там есть корень!
+                try:
+                    # Используем брентq только на найденном узком отрезке
+                    t_hit = brentq(objective, t_prev, t_curr, xtol=1e-6)
+                    return t_hit, ro + t_hit * rd
+                except ValueError:
+                    pass # Если брентq не сошелся (редко), идем дальше
+                    
+            t_prev, f_prev = t_curr, f_curr
+            
+        return None, None # Пересечение не найдено
+
+
+# ======================================================================
 # 2. АНАЛИТИЧЕСКИЕ РЕАЛИЗАЦИИ ДЛЯ КОНКРЕТНЫХ ПОВЕРХНОСТЕЙ
 # ======================================================================
 
