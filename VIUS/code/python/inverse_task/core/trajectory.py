@@ -53,8 +53,8 @@ class Trajectory:
         self._u_func = lambda s: np.interp(s, s_fine, u_fine)
         self._total_length = s_fine[-1]
 
-    def R(self, z: float) -> np.ndarray:
-        z = np.clip(z, 0.0, self._total_length)
+    def R(self, s: float) -> np.ndarray:
+        z = np.clip(s, 0.0, self._total_length)
         u = self._u_func(z)
         return np.array([
             self._curve_x.evaluate(u),
@@ -62,8 +62,8 @@ class Trajectory:
             self._curve_z.evaluate(u)
         ])
 
-    def R_deriv(self, z: float) -> np.ndarray:
-        z = np.clip(z, 0.0, self._total_length)
+    def R_deriv(self, s: float) -> np.ndarray:
+        z = np.clip(s, 0.0, self._total_length)
         u = self._u_func(z)
         dx_du = self._curve_x.evaluate(u, 1)
         dy_du = self._curve_y.evaluate(u, 1)
