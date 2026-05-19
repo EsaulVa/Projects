@@ -34,9 +34,10 @@ lu_trajectory = Trajectory.from_points(r_etalon, method='cubic')
 
 print("===== 1. Расчет коридоров =====")
 tracer = RayTracer()
+Num_points=200
 tracer.register(PiecewisePolynomialRevolution, PiecewisePolynomialIntersection())
-result_max = CorridorMaxCalculator(lu_trajectory, E1_safety, tracer, safe_distance=15.0).calculate(num_points=50)
-result_min = CorridorMinCalculator(lu_trajectory, E2_opravka, safe_margin=10.0).calculate(num_points=50)
+result_max = CorridorMaxCalculator(lu_trajectory, E1_safety, tracer, safe_distance=15.0).calculate(num_points=Num_points)
+result_min = CorridorMinCalculator(lu_trajectory, E2_opravka, safe_margin=10.0).calculate(num_points=Num_points)
 
 valid_mask = result_max.valid_mask & result_min.valid_mask
 print(f"Точек после двойной фильтрации: {np.sum(valid_mask)} из 200")
@@ -244,3 +245,35 @@ target_points_original = np.array([tsn_func(s) for s in s_array])
 error = np.linalg.norm(target_points_original - R_tsn_reconstructed, axis=1)
 print(f"Средняя ошибка прямой задачи: {np.mean(error):.3e} мм, макс: {np.max(error):.3e} мм")
 print(f"Средняя ошибка прямой задачи: {np.mean(error):.3e} мм, макс: {np.max(error):.3e} мм")
+
+import pickle
+
+# Сохраняем параметры станка
+machine_params = {
+    'ring_radius': 50.0,
+    'd_offset': 100.0,
+    'type': 'Machine3AxisExact_ODE'
+}
+with open('machine_params.pkl', 'wb') as f:
+    pickle.dump(machine_params, f)
+print("Параметры станка сохранены в machine_params.pkl")
+
+
+# После уточнения, перед сохранением
+s_vals_for_save = s_array   # это тот же s_vals, что использовался для сплайнов
+tsn_pts_for_save = np.array([tsn_trajectory.R(s) for s in s_vals_for_save])   # пересчитайте, если не сохранили
+# Но у вас уже был массив tsn_pts, созданный ранее, используйте его
+
+results_full = {
+    's': s_vals_for_save,
+    'theta': theta_actual,
+    'Z': Z_actual,
+    'R': R_actual,
+    'phi': coords[:, 3],
+    'z_offset': z_offset,
+    'tsn_pts': tsn_pts,          # вместо points_wall
+    'mandrel_pts': mandrel_pts,  # вместо lu_points_global
+    'ring_radius': 50.0,
+    'd_offset': 100.0,
+}
+scipy.io.savemat('kinematics_results_full.mat', results_full)
