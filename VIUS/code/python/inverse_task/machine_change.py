@@ -137,19 +137,7 @@ q0_free = np.array([theta_orig[0], Z_carriage_orig[0], phi_orig[0]])
 # 4. ИНТЕГРИРОВАНИЕ С ФИКСАЦИЕЙ
 # ============================================================================
 # print("Интегрирование с фиксацией оси Z...")
-result = kin_model.integrate_fixed(
-    s_span=(s_array[0], s_array[-1]),
-    q0_free=q0_free,
-    fixed_funcs=fixed_funcs,
-    fixed_indices=fixed_indices,
-    tsn_func=tsn_traj,
-    mandrel_func=mandrel_traj,
-    d_tsn_func=d_tsn,
-    d_mandrel_func=d_mandrel,
-    s_eval=s_array,
-    alpha=2.0
-)
-# result = kin_model.integrate_fixed_step(
+# result = kin_model.integrate_fixed(
 #     s_span=(s_array[0], s_array[-1]),
 #     q0_free=q0_free,
 #     fixed_funcs=fixed_funcs,
@@ -158,10 +146,22 @@ result = kin_model.integrate_fixed(
 #     mandrel_func=mandrel_traj,
 #     d_tsn_func=d_tsn,
 #     d_mandrel_func=d_mandrel,
-#     step=0.01,                # шаг 10 мм (можно менять)
-#     s_eval=s_array,           # вернуть на исходной сетке
-#     alpha=0
+#     s_eval=s_array,
+#     alpha=2.0
 # )
+result = kin_model.integrate_fixed_step(
+    s_span=(s_array[0], s_array[-1]),
+    q0_free=q0_free,
+    fixed_funcs=fixed_funcs,
+    fixed_indices=fixed_indices,
+    tsn_func=tsn_traj,
+    mandrel_func=mandrel_traj,
+    d_tsn_func=d_tsn,
+    d_mandrel_func=d_mandrel,
+    step=0.1,                # шаг 10 мм (можно менять)
+    s_eval=s_array,           # вернуть на исходной сетке
+    alpha=0
+)
 
 s_new = result['s_array']
 coords_new = result['coords']            # (N,4): [theta, Z_carriage, R, phi]

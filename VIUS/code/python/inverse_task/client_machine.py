@@ -110,21 +110,21 @@ s_array = deploy_result['s_array']
 #             coords[:, col] = interp_func(s_array)
 #     print("Неудачные точки интерполированы.")
 
-# ===== Уточнение полученных координат =====
-print("Уточнение координат итерационным методом...")
-from machine.machine3axis_exact import Machine3AxisExact
-machine_iter = Machine3AxisExact(ring_radius=50.0, d_offset=100.0)
-coords_refined = np.zeros_like(coords)
-for i, s in enumerate(s_array):
-    target_data = {'point': tsn_func(s), 'r_mandrel': mandrel_func(s)}
-    guess = MachineState(coords[i])
-    try:
-        refined = machine_iter.inverse(target_data, guess)
-        coords_refined[i] = refined.coords
-    except Exception as e:
-        print(f"Refinement failed at i={i}: {e}, keeping original")
-        coords_refined[i] = coords[i]
-coords = coords_refined.copy()
+# # ===== Уточнение полученных координат =====
+# print("Уточнение координат итерационным методом...")
+# from machine.machine3axis_exact import Machine3AxisExact
+# machine_iter = Machine3AxisExact(ring_radius=50.0, d_offset=100.0)
+# coords_refined = np.zeros_like(coords)
+# for i, s in enumerate(s_array):
+#     target_data = {'point': tsn_func(s), 'r_mandrel': mandrel_func(s)}
+#     guess = MachineState(coords[i])
+#     try:
+#         refined = machine_iter.inverse(target_data, guess)
+#         coords_refined[i] = refined.coords
+#     except Exception as e:
+#         print(f"Refinement failed at i={i}: {e}, keeping original")
+#         coords_refined[i] = coords[i]
+# coords = coords_refined.copy()
 theta_actual = coords[:, 0]
 Z_actual = coords[:, 1] + z_offset
 R_actual = coords[:, 2]
