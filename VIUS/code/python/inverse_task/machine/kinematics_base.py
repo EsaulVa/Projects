@@ -23,6 +23,21 @@ class MachineState:
 
 class IMachineKinematics(ABC):
     @abstractmethod
+    def adapt_data(self, raw_data: dict) -> dict:
+        """
+        Преобразует сырые данные из MAT-файла в формат, пригодный для данной модели станка.
+        raw_data – словарь, загруженный из .mat (содержит ключи 's', 'theta', 'Z', 'R', 'phi', 'z_offset', ...)
+        Возвращает словарь с ключами:
+            's' : np.ndarray (1D)
+            'q_orig' : np.ndarray (N x n_axes) – локальные обобщённые координаты
+            'axes_names' : list of str
+            'units' : list of str
+            'tsn_pts' : np.ndarray (N x 3) – точки ТСН (опционально)
+            'mandrel_pts' : np.ndarray (N x 3) – точки касания на оправке
+            'z_offset' : float (смещение, если нужно для визуализации)
+        """
+        pass
+    @abstractmethod
     def forward(self, state: MachineState) -> dict:
         """Прямая кинематика: возвращает {'point': ..., 'd': ..., 'n': ...}"""
         pass

@@ -124,14 +124,17 @@ from scipy.interpolate import UnivariateSpline
 
 # # Начальные значения свободных координат (theta, R, phi) из первой точки
 # q0_free = np.array([theta_orig[0], R_orig[0], phi_orig[0]])
-R_spline = UnivariateSpline(s_array, R_orig, s=1e3)   # подберите s под свой выброс
-R_fixed = R_spline(s_array)
+# Coord_T=Z_carriage_orig
+Coord_T=R_orig
+Coord_spline = UnivariateSpline(s_array, Coord_T, s=1e3)   # подберите s под свой выброс
+Coord_fixed = Coord_spline(s_array)
 
 fixed_indices = [2]                       # индекс оси Z
-fixed_funcs = [lambda s: R_spline(s)]     # функция, возвращающая Z_carriage(s)
+fixed_funcs = [lambda s: Coord_spline(s)]     # функция, возвращающая Z_carriage(s)
 
 # Начальные значения свободных координат (theta, R, phi) из первой точки
-q0_free = np.array([theta_orig[0], Z_carriage_orig[0], phi_orig[0]])
+q0_free = np.array([theta_orig[0], Z_carriage_orig[0], R_orig[0],phi_orig[0]])
+q0_free=np.delete(q0_free,fixed_indices[0])
 
 # ============================================================================
 # 4. ИНТЕГРИРОВАНИЕ С ФИКСАЦИЕЙ
@@ -160,7 +163,7 @@ result = kin_model.integrate_fixed_step(
     d_mandrel_func=d_mandrel,
     step=0.1,                # шаг 10 мм (можно менять)
     s_eval=s_array,           # вернуть на исходной сетке
-    alpha=0
+    alpha=2
 )
 
 s_new = result['s_array']

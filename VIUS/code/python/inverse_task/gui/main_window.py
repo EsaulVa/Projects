@@ -1,17 +1,30 @@
+import os
 import sys
+import webbrowser
 import numpy as np
 import scipy.io
 import pickle
 from scipy.interpolate import CubicSpline, UnivariateSpline
+import plotly
+import os
+# Удаляем:
+# import plotly.graph_objects as go
+# from PyQt5.QtWebEngineWidgets import QWebEngineView
+
+# Добавляем:
+# import pyqtgraph as pg
+# import pyqtgraph.opengl as gl
+# from pyqtgraph.opengl import GLViewWidget, GLLinePlotItem, GLScatterPlotItem,GLGridItem
 import plotly.graph_objects as go
+import webbrowser
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QGroupBox, QCheckBox, QComboBox,
                              QPushButton, QSlider, QLabel, QProgressBar,
                              QTabWidget, QDockWidget, QFileDialog, QMessageBox,
                              QSplitter, QTableWidget, QTableWidgetItem,
                              QDoubleSpinBox, QSpinBox)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
-from PyQt5.QtWebEngineWidgets import QWebEngineView
+from PyQt5.QtCore import QUrl, Qt, QThread, pyqtSignal
+# from PyQt5.QtWebEngineWidgets import QWebEngineView
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import sys
@@ -24,6 +37,7 @@ sys.path.insert(0, str(root_dir))
 from machine.machine3axis_exact import Machine3AxisExact_ODE
 from machine.kinematic_model import KinematicModel
 from machine.kinematics_base import MachineState
+from machine.machine_factory import create_machine
 
 
 class ComputeThread(QThread):
@@ -115,9 +129,7 @@ class RefinementApp(QMainWindow):
         self.central_tabs = QTabWidget()
         self.setCentralWidget(self.central_tabs)
         self.plots_tab = QWidget()
-        self.central_tabs.addTab(self.plots_tab, "Графики")
-        self.scene3d_tab = QWidget()
-        self.central_tabs.addTab(self.scene3d_tab, "3D вид")
+        self.central_tabs.addTab(self.plots_tab, "Графики")       
         self.table_tab = QWidget()
         self.central_tabs.addTab(self.table_tab, "Таблица")
 
@@ -133,16 +145,20 @@ class RefinementApp(QMainWindow):
         self.progress_bar.setVisible(False)
         self.status_bar.addPermanentWidget(self.progress_bar)
 
+         # В _init_ui или _setup_control_panel добавим:
+        self.stop_btn = QPushButton("Остановить")
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.clicked.connect(self.stop_calculation)
+        self.status_bar.addPermanentWidget(self.stop_btn)
+
         # Инициализация вкладок (заполнятся после загрузки)
         self.plots_layout = QVBoxLayout(self.plots_tab)
         self.table_widget = QTableWidget()
         QVBoxLayout(self.table_tab).addWidget(self.table_widget)
 
-        # 3D вид – используем QWebEngineView для plotly
-        self.web_view = QWebEngineView()
-        QVBoxLayout(self.scene3d_tab).addWidget(self.web_view)
-
+              
         self.run_btn.setEnabled(False)
+        
 
     def _setup_control_panel(self):
         panel = QWidget()
@@ -152,6 +168,7 @@ class RefinementApp(QMainWindow):
         load_group = QGroupBox("Загрузка")
         load_layout = QVBoxLayout()
         self.load_data_btn = QPushButton("Загрузить kinematics_results_full.mat")
+        self.load_data_btn.setEnabled(False)   # <-- блокируем до загрузки станка
         self.load_machine_btn = QPushButton("Загрузить параметры станка (machine_params.pkl)")
         load_layout.addWidget(self.load_data_btn)
         load_layout.addWidget(self.load_machine_btn)
@@ -216,77 +233,146 @@ class RefinementApp(QMainWindow):
         # Подключаем кнопки загрузки
         self.load_data_btn.clicked.connect(self.load_data)
         self.load_machine_btn.clicked.connect(self.load_machine)
-
+        self.show_3d_btn = QPushButton("Показать 3D сцену")
+        self.show_3d_btn.clicked.connect(self._show_3d)
+        layout.addWidget(self.show_3d_btn)
+    def _show_3d(self):
+        if self.tsn_pts is None or self.mandrel_pts is None:
+            QMessageBox.warning(self, "Нет данных", "Сначала загрузите данные")
+            return
+        fig = go.Figure()
+        fig.add_trace(go.Scatter3d(x=self.tsn_pts[:,0], y=self.tsn_pts[:,1], z=self.tsn_pts[:,2],
+                                mode='lines', name='ТСН (исходная)', line=dict(color='red', width=4)))
+        fig.add_trace(go.Scatter3d(x=self.mandrel_pts[:,0], y=self.mandrel_pts[:,1], z=self.mandrel_pts[:,2],
+                                mode='lines', name='Линия укладки', line=dict(color='green', width=4)))
+        if hasattr(self, 'last_corrected_tsn') and self.last_corrected_tsn is not None:
+            fig.add_trace(go.Scatter3d(x=self.last_corrected_tsn[:,0], y=self.last_corrected_tsn[:,1], z=self.last_corrected_tsn[:,2],
+                                    mode='lines', name='ТСН (скорректированная)', line=dict(color='black', width=2, dash='solid')))
+        fig.update_layout(scene=dict(aspectmode='data'))
+        # Уникальное имя файла
+        import time
+        timestamp = int(time.time())
+        filename = f"3d_scene_{timestamp}.html"
+        fig.write_html(filename)
+        webbrowser.open(filename)
+        self.status_bar.showMessage(f"3D сцена сохранена как {filename} и открыта в браузере")
     def load_data(self):
-        fname, _ = QFileDialog.getOpenFileName(self, "Выберите файл результатов", "",
-                                               "MAT files (*.mat)")
+        fname, _ = QFileDialog.getOpenFileName(self, "Выберите файл результатов", "", "MAT files (*.mat)")
         if not fname:
             return
         try:
-            mat = scipy.io.loadmat(fname)
-            # Ожидаемые поля: 's', 'theta','Z','R','phi','tsn_pts','mandrel_pts','z_offset'
-            self.s_array = mat['s'].flatten()
-            self.tsn_pts = mat['tsn_pts']
-            self.mandrel_pts = mat['mandrel_pts']
-            self.z_offset = float(mat['z_offset'].flatten()[0])
-
-            # Определяем оси из наличия полей (theta, Z, R, phi)
-            possible_axes = ['theta', 'Z', 'R', 'phi']
-            self.axes_names = []
-            self.axes_units = []
-            self.q_orig = []
-            for ax in possible_axes:
-                if ax in mat:
-                    self.axes_names.append(ax)
-                    unit = "рад" if ax == 'theta' or ax == 'phi' else "мм"
-                    self.axes_units.append(unit)
-                    self.q_orig.append(mat[ax].flatten())
-            self.q_orig = np.column_stack(self.q_orig)  # (N, n_axes)
-
-            # Обновить интерфейс: создать чекбоксы для осей
-            self._update_axes_selector()
-            # Построить сплайны для ТСН и оправки (нужны для пересчёта)
-            self.tsn_traj = CubicSpline(self.s_array, self.tsn_pts, axis=0, bc_type='natural')
-            self.mandrel_traj = CubicSpline(self.s_array, self.mandrel_pts, axis=0, bc_type='natural')
-            self.d_tsn = self.tsn_traj.derivative(1)
-            self.d_mandrel = self.mandrel_traj.derivative(1)
-
-            # Отобразить исходные графики и таблицу
-            self._update_plots(original=True)
-            self._update_table()
-            self._update_3d()
-
-            QMessageBox.information(self, "Успех", f"Загружено {len(self.s_array)} точек, {len(self.axes_names)} осей")
-            self.run_btn.setEnabled(True)
+            raw = scipy.io.loadmat(fname)
+            self.raw_data = raw
+            if self.machine is None:
+                QMessageBox.information(self, "Данные загружены", "Загрузите станок для автоматической адаптации")
+                self._clear_plots()          # очищаем, чтобы не было старых графиков
+                self.run_btn.setEnabled(False)
+                return
+            adapted = self.machine.adapt_data(raw)
+            self._clear_plots()              # очищаем перед применением новых данных
+            self._apply_adapted_data(adapted)
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Не удалось загрузить данные: {e}")
-
-    def _update_axes_selector(self):
-        # Очистить старые чекбоксы
-        for i in reversed(range(self.axes_layout.count())):
-            self.axes_layout.itemAt(i).widget().deleteLater()
-        self.axis_checkboxes = []
-        for idx, name in enumerate(self.axes_names):
-            cb = QCheckBox(name)
-            cb.setChecked(False)   # по умолчанию не фиксируем
-            self.axes_layout.addWidget(cb)
-            self.axis_checkboxes.append(cb)
-
+    
     def load_machine(self):
-        fname, _ = QFileDialog.getOpenFileName(self, "Выберите параметры станка", "",
-                                               "Pickle files (*.pkl)")
+        fname, _ = QFileDialog.getOpenFileName(self, "Выберите параметры станка", "", "Pickle files (*.pkl)")
         if not fname:
             return
         try:
             with open(fname, 'rb') as f:
-                params = pickle.load(f)
-            # Ожидаем ring_radius, d_offset, возможно, type
-            self.machine = Machine3AxisExact_ODE(ring_radius=params['ring_radius'],
-                                                 d_offset=params['d_offset'])
+                data = pickle.load(f)
+            class_name = data.pop('type', None)
+            if class_name is None:
+                raise ValueError("Файл параметров не содержит ключ 'class'")
+            self.machine = create_machine(class_name, data)
             self.kin_model = KinematicModel(self.machine)
-            QMessageBox.information(self, "Успех", "Модель станка загружена")
+            self.load_data_btn.setEnabled(True)  # активируем загрузку данных
+            # Если ранее были загружены сырые данные – адаптируем
+            if hasattr(self, 'raw_data') and self.raw_data is not None:
+                adapted = self.machine.adapt_data(self.raw_data)
+                self._apply_adapted_data(adapted)
+                self.raw_data = None
+            QMessageBox.information(self, "Успех", f"Модель {class_name} загружена")
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Не удалось загрузить станок: {e}")
+
+    def _apply_adapted_data(self, adapted: dict):
+        # Очистка перед заполнением (на всякий случай)
+        self._clear_plots()
+        """Заполняет атрибуты и обновляет UI на основе адаптированных данных."""
+        self.s_array = adapted['s']
+        self.q_orig = adapted['q_orig']
+        self.axes_names = adapted['axes_names']
+        self.axes_units = adapted['units']
+        self.tsn_pts = adapted.get('tsn_pts', None)
+        self.mandrel_pts = adapted.get('mandrel_pts', None)
+        self.z_offset = adapted.get('z_offset', 0.0)
+
+        # Построение сплайнов для ТСН и оправки (если есть)
+        if self.tsn_pts is not None and self.mandrel_pts is not None:
+            self.tsn_traj = CubicSpline(self.s_array, self.tsn_pts, axis=0, bc_type='natural')
+            self.mandrel_traj = CubicSpline(self.s_array, self.mandrel_pts, axis=0, bc_type='natural')
+            self.d_tsn = self.tsn_traj.derivative(1)
+            self.d_mandrel = self.mandrel_traj.derivative(1)
+        else:
+            self.tsn_traj = None
+            self.mandrel_traj = None
+
+        # Обновить интерфейс выбора осей (чеки)
+        self._update_axes_selector()
+        # Обновить графики, таблицу и 3D-вид
+        self._update_plots(original=True)
+        self._update_table()
+        # self._update_3d()
+        self.run_btn.setEnabled(True)
+        self.status_bar.showMessage(f"Загружено {len(self.s_array)} точек, {len(self.axes_names)} осей")
+
+    def _clear_plots(self):
+        """Безопасно очищает все графики, таблицу и 3D-вид."""
+        # 1. Очистка layout с графиками
+        if hasattr(self, 'plots_layout') and self.plots_layout is not None:
+            while self.plots_layout.count():
+                item = self.plots_layout.takeAt(0)
+                if item is None:
+                    continue
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
+        self.plot_canvases = []
+        
+        # 2. Очистка таблицы
+        if hasattr(self, 'table_widget') and self.table_widget is not None:
+            self.table_widget.clear()
+            self.table_widget.setRowCount(0)
+            self.table_widget.setColumnCount(0)
+        
+        if hasattr(self, 'gl_widget'):
+            self.gl_widget.clear()
+        
+        # 4. Сброс данных
+        self.s_array = None
+        self.q_orig = None
+        self.tsn_pts = None
+        self.mandrel_pts = None
+        self.axes_names = []
+        self.axes_units = []
+
+    def _update_axes_selector(self):
+        # Безопасная очистка старых чекбоксов
+        if hasattr(self, 'axes_layout') and self.axes_layout is not None:
+            while self.axes_layout.count():
+                item = self.axes_layout.takeAt(0)
+                if item is None:
+                    continue
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
+        self.axis_checkboxes = []
+        for idx, name in enumerate(self.axes_names):
+            cb = QCheckBox(name)
+            cb.setChecked(False)
+            self.axes_layout.addWidget(cb)
+            self.axis_checkboxes.append(cb)
 
     def _update_plots(self, original=True):
         # Очистить layout
@@ -325,17 +411,62 @@ class RefinementApp(QMainWindow):
             self.table_widget.setItem(i, 0, QTableWidgetItem(f"{s:.2f}"))
             for j, name in enumerate(self.axes_names):
                 self.table_widget.setItem(i, j+1, QTableWidgetItem(f"{self.q_orig[i, j]:.4f}"))
+    # def _update_3d(self):
+    #     """Отображает исходные линии ТСН и оправки."""
+    #     if self.tsn_pts is None or self.mandrel_pts is None:
+    #         return
+    #     self.gl_widget.clear()
 
-    def _update_3d(self):
-        if self.tsn_pts is None or self.mandrel_pts is None:
-            return
-        fig = go.Figure()
-        fig.add_trace(go.Scatter3d(x=self.tsn_pts[:,0], y=self.tsn_pts[:,1], z=self.tsn_pts[:,2],
-                                   mode='lines', name='ТСН (исходная)'))
-        fig.add_trace(go.Scatter3d(x=self.mandrel_pts[:,0], y=self.mandrel_pts[:,1], z=self.mandrel_pts[:,2],
-                                   mode='lines', name='Линия укладки'))
-        fig.update_layout(scene=dict(aspectmode='data'))
-        self.web_view.setHtml(fig.to_html(include_plotlyjs='cdn'))
+    #     # Оси координат для ориентации
+    #     axes = gl.GLAxisItem()
+    #     self.gl_widget.addItem(axes)
+
+    #     # Координатная сетка
+    #     grid = gl.GLGridItem()
+    #     grid.setSize(1000, 1000)
+    #     grid.setSpacing(100, 100)
+    #     self.gl_widget.addItem(grid)
+
+    #     # Линия укладки (mandrel_pts) – зелёная
+    #     mandrel_line = gl.GLLinePlotItem(pos=self.mandrel_pts, color=(0, 1, 0, 1), width=2)
+    #     self.gl_widget.addItem(mandrel_line)
+
+    #     # Исходная ТСН (tsn_pts) – красная
+    #     tsn_line = gl.GLLinePlotItem(pos=self.tsn_pts, color=(1, 0, 0, 1), width=2)
+    #     self.gl_widget.addItem(tsn_line)
+
+    #     # Автоматическое центрирование камеры
+    #     all_points = np.vstack([self.tsn_pts, self.mandrel_pts])
+    #     center = all_points.mean(axis=0)
+    #     radius = np.linalg.norm(all_points - center, axis=1).max()
+    #     distance = radius * 2.5
+
+    #     self.gl_widget.setCenter(center)
+    #     self.gl_widget.setCameraPosition(distance=distance, azimuth=45, elevation=30)
+    #     self.gl_widget.update()
+    # def _update_3d(self):
+    #     """Отображает исходные линии ТСН и оправки."""
+    #     if self.tsn_pts is None or self.mandrel_pts is None:
+    #         return
+    #     # Очищаем предыдущие элементы (но оставляем сетку? можно пересоздать всё)
+    #     self.gl_widget.clear()  # удаляет всё, добавим только нужное
+
+    #     # Добавим координатную сетку для ориентации
+    #     grid = GLGridItem()
+    #     grid.setSize(1000, 1000)
+    #     grid.setSpacing(100, 100)
+    #     self.gl_widget.addItem(grid)
+
+    #     # Линия укладки (mandrel_pts) – зелёная
+    #     mandrel_line = GLLinePlotItem(pos=self.mandrel_pts, color=(0, 1, 0, 1), width=2)
+    #     self.gl_widget.addItem(mandrel_line)
+
+    #     # Исходная ТСН (tsn_pts) – красная
+    #     tsn_line = GLLinePlotItem(pos=self.tsn_pts, color=(1, 0, 0, 1), width=2)
+    #     self.gl_widget.addItem(tsn_line)
+
+    #     # Установим границы по осям (для удобства)
+    #     self.gl_widget.setCameraPosition(distance=1500, azimuth=-90, elevation=20)
 
     def run_refinement(self):
         if self.kin_model is None:
@@ -372,7 +503,6 @@ class RefinementApp(QMainWindow):
         method = 'adaptive' if self.solver_combo.currentIndex() == 0 else 'fixed_step'
         step = self.step_spin.value() if method == 'fixed_step' else None
         alpha = self.alpha_spin.value()
-
         # Запускаем поток
         self.compute_thread = ComputeThread(
             kin_model=self.kin_model,
@@ -392,13 +522,19 @@ class RefinementApp(QMainWindow):
         self.compute_thread.finished.connect(self.on_refinement_finished)
         self.compute_thread.error.connect(self.on_refinement_error)
         self.run_btn.setEnabled(False)
+    #     self.progress_bar.setVisible(True)
+    #     self.progress_bar.setRange(0, 0)  # индетерминированный прогресс
+    #   # ... подготовка
+        self.stop_btn.setEnabled(True)
+        self.run_btn.setEnabled(False)
         self.progress_bar.setVisible(True)
-        self.progress_bar.setRange(0, 0)  # индетерминированный прогресс
+        self.progress_bar.setRange(0, 0)
         self.compute_thread.start()
 
     def on_refinement_finished(self, result):
-        self.progress_bar.setVisible(False)
+        self.stop_btn.setEnabled(False)
         self.run_btn.setEnabled(True)
+        self.progress_bar.setVisible(False) 
 
         coords_new = result['coords']   # (N, n_axes)
         # Обновить графики: добавить новые линии
@@ -422,6 +558,7 @@ class RefinementApp(QMainWindow):
             R_tsn_rec[i] = self.machine.forward(state)['point']
         target = np.array([self.tsn_traj(s) for s in self.s_array])
         error = np.linalg.norm(target - R_tsn_rec, axis=1)
+        self.last_corrected_tsn = R_tsn_rec.copy()
         QMessageBox.information(self, "Результат",
                                 f"Средняя ошибка прямой задачи: {np.mean(error):.3e} мм\n"
                                 f"Максимальная ошибка: {np.max(error):.3e} мм")
@@ -440,9 +577,22 @@ class RefinementApp(QMainWindow):
         self.status_bar.showMessage("Результаты сохранены в refined_kinematics.mat")
 
     def on_refinement_error(self, err_msg):
+        self.stop_btn.setEnabled(False)
+        self.run_btn.setEnabled(True)
         self.progress_bar.setVisible(False)
         self.run_btn.setEnabled(True)
         QMessageBox.critical(self, "Ошибка расчёта", err_msg)
+    
+    
+    def stop_calculation(self):
+        if hasattr(self, 'compute_thread') and self.compute_thread.isRunning():
+            self.compute_thread.terminate()
+            self.compute_thread.wait()
+            self.stop_btn.setEnabled(False)
+            self.run_btn.setEnabled(True)
+            self.progress_bar.setVisible(False)
+            self.status_bar.showMessage("Расчёт остановлен пользователем")
+            QMessageBox.information(self, "Остановлено", "Расчёт прерван")
 
 
 if __name__ == "__main__":

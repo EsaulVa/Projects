@@ -2,6 +2,12 @@ import numpy as np
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 import scipy.io
+import sys
+from pathlib import Path
+
+# Добавляем корневую директорию проекта (родительскую по отношению к папке gui)
+root_dir = Path(__file__).parent.parent
+sys.path.insert(0, str(root_dir))
 from geometry.piecewise_polynomial_revolution import PiecewisePolynomialRevolution
 from core.trajectory import Trajectory
 from solvers.scipy_solver import SciPySolver
@@ -11,6 +17,13 @@ from helpers.dae_predictor import DAEPredictor
 from helpers.optical_predictor import OpticalPredictor, RayTracer
 from helpers.intersection import RevolutionIntersection,RobustRevolutionIntersection
 from geometry.tsurfaces import FixedPointTrajectory
+
+import sys
+from pathlib import Path
+
+# Добавляем корневую директорию проекта (родительскую по отношению к папке gui)
+root_dir = Path(__file__).parent.parent
+sys.path.insert(0, str(root_dir))
 
 # ---------- Коэффициенты из surface_r.m (оправка) ----------
 phi_c_opravka = [0.0000000005642, -0.0000003012748, 0.0000605882383, -0.0099656628535, 2.9503573330764]

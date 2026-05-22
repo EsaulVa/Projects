@@ -2,6 +2,12 @@ import numpy as np
 import plotly.graph_objects as go
 from scipy.interpolate import CubicSpline
 import scipy.io as sio
+import sys
+from pathlib import Path
+
+# Добавляем корневую директорию проекта (родительскую по отношению к папке gui)
+root_dir = Path(__file__).parent.parent
+sys.path.insert(0, str(root_dir))
 
 from geometry.composite_surface import CompositeSurface, CylinderSegment, SphereSegment
 from core.const_dev_law import ConstantDeviation
