@@ -121,6 +121,25 @@ class PiecewisePolynomialRevolution(AnalyticalSurface):
         else:
             normal = np.array([0.0, 0.0, 1.0])  # на цилиндре rp=0, r>0 -> cross = (-r cos v, -r sin v, 0), длина r, нормаль = (-cos v, -sin v, 0) — внешняя? Да, внешняя нормаль цилиндра направлена от оси.
         return {'r': point, 'ru': ru, 'rv': rv, 'normal': normal}
+    def partial_u(self, u, v):
+        """Возвращает вектор ru = dr/du."""
+        deriv = self.derivatives(u, v)
+        return deriv['ru']
+
+    def partial_v(self, u, v):
+        """Возвращает вектор rv = dr/dv."""
+        deriv = self.derivatives(u, v)
+        return deriv['rv']
+
+    def normal(self, u, v):
+        """Возвращает единичную нормаль к поверхности."""
+        deriv = self.derivatives(u, v)
+        return deriv['normal']
+
+    def second_fundamental_form(self, u, v):
+        """Возвращает L, M, N."""
+        # уже есть, но убедимся, что он возвращает кортеж (L, M, N)
+        return self.second_fundamental_form(u, v)  # он уже определён
 
     def first_fundamental_form(self, u, v):
         r, rp, _ = self._compute_r_and_derivs(u)
