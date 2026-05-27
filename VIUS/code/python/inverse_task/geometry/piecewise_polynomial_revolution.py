@@ -109,12 +109,14 @@ class PiecewisePolynomialRevolution(AnalyticalSurface):
         # rv = (-r sin v, r cos v, 0)
         rv = np.array([-r * sin_v, r * cos_v, 0.0])
         # нормаль: ru x rv, потом нормируем. Для поверхности вращения ru x rv = ( -cos_v, -sin_v, rp )
-        cross = np.array([-cos_v, -sin_v, rp])  # в MATLAB-коде ru × rv даёт именно это, но без r? Проверим: ru = (rp cos, rp sin, 1); rv = (-r sin, r cos, 0); cross = ( -cos, -sin, rp ) (после сокращения на r?) Нет, пересчитаем: ru = (rp cos v, rp sin v, 1); rv = (-r sin v, r cos v, 0). Векторное произведение: ru × rv = ( -cos v * r, -sin v * r, rp * r )? Давайте вычислим:
-        # i-компонента: ru[1]*rv[2] - ru[2]*rv[1] = (rp sin v)*0 - 1*(r cos v) = -r cos v
-        # j-компонента: ru[2]*rv[0] - ru[0]*rv[2] = 1*(-r sin v) - (rp cos v)*0 = -r sin v
-        # k-компонента: ru[0]*rv[1] - ru[1]*rv[0] = (rp cos v)*(r cos v) - (rp sin v)*(-r sin v) = r rp (cos^2 v + sin^2 v) = r rp.
-        # Итак, cross = (-r cos v, -r sin v, r rp). Длина = r * sqrt(1 + rp^2). Тогда единичная нормаль = (-cos v / sqrt(1+rp^2), -sin v / sqrt(1+rp^2), rp / sqrt(1+rp^2)). Но в MATLAB-коде они, похоже, используют внешнюю нормаль. Нам безразлично, примем этот вектор как внешнюю нормаль.
-        cross = np.array([-r * cos_v, -r * sin_v, r * rp])
+        # cross = np.array([-cos_v, -sin_v, rp])  # в MATLAB-коде ru × rv даёт именно это, но без r? Проверим: ru = (rp cos, rp sin, 1); rv = (-r sin, r cos, 0); cross = ( -cos, -sin, rp ) (после сокращения на r?) Нет, пересчитаем: ru = (rp cos v, rp sin v, 1); rv = (-r sin v, r cos v, 0). Векторное произведение: ru × rv = ( -cos v * r, -sin v * r, rp * r )? Давайте вычислим:
+        # # i-компонента: ru[1]*rv[2] - ru[2]*rv[1] = (rp sin v)*0 - 1*(r cos v) = -r cos v
+        # # j-компонента: ru[2]*rv[0] - ru[0]*rv[2] = 1*(-r sin v) - (rp cos v)*0 = -r sin v
+        # # k-компонента: ru[0]*rv[1] - ru[1]*rv[0] = (rp cos v)*(r cos v) - (rp sin v)*(-r sin v) = r rp (cos^2 v + sin^2 v) = r rp.
+        # # Итак, cross = (-r cos v, -r sin v, r rp). Длина = r * sqrt(1 + rp^2). Тогда единичная нормаль = (-cos v / sqrt(1+rp^2), -sin v / sqrt(1+rp^2), rp / sqrt(1+rp^2)). Но в MATLAB-коде они, похоже, используют внешнюю нормаль. Нам безразлично, примем этот вектор как внешнюю нормаль.
+        # cross = np.array([-r * cos_v, -r * sin_v, r * rp])
+        # СТАЛО (внешняя):
+        cross = np.array([r * cos_v, r * sin_v, -r * rp])
         norm_cross = np.linalg.norm(cross)
         if norm_cross > 1e-12:
             normal = cross / norm_cross
