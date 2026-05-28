@@ -240,18 +240,32 @@ ray_tracer = RayTracer()
 ray_tracer.register(FixedPiecewisePolynomialRevolution, FixedRobustRevolutionIntersection())
 optical_predictor = OpticalPredictor(ray_tracer)
 
+# result = inverse_winding_hybrid(
+#     E2, traj, u0, v0,
+#     count_points=200,    # достаточно, чтобы увидеть проблему
+#     max_newton=20,
+#     eps_Phi=1e-10,
+#     # остальное как есть
+#     max_bisect=4,
+#     jump_threshold=3.0,
+#     predictor_dae=dae_predictor,
+#     predictor_optical=optical_predictor,
+#     eps_kappa=1e-2,      # ← включить кривизну
+#     u_margin=20.0,       # ← сузить оптику до реального днища
+#     force_optical_after_fail=False
+# )
 result = inverse_winding_hybrid(
     E2, traj, u0, v0,
-    count_points=700,
+    count_points=3000,        # для быстрой проверки
     eps_Phi=1e-10,
-    max_newton=20,       # ← дать корректору запас
+    max_newton=20,
     max_bisect=4,
-    jump_threshold=3.0,
+    jump_threshold=5.0,      # ослабим — оптика может давать умеренные скачки
     predictor_dae=dae_predictor,
     predictor_optical=optical_predictor,
-    eps_kappa=1e-2,      # ← включить кривизну
-    u_margin=20.0,       # ← сузить оптику до реального днища
-    force_optical_after_fail=False
+    eps_kappa=1e10,          # кривизна отключена
+    u_margin=250.0,          # оптика на днище + цилиндр
+    force_optical_after_fail=True
 )
 # Извлечение результатов
 z_vals = result['z_eval']
