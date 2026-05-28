@@ -1,7 +1,7 @@
 diff --git a/helpers/inverse_winding_intermediate.py b/helpers/inverse_winding_intermediate.py
 --- a/helpers/inverse_winding_intermediate.py
 +++ b/helpers/inverse_winding_intermediate.py
-@@ -7,10 +7,9 @@ from typing import Optional, Dict, Any
+@@ -7,7 +7,7 @@ from typing import Optional, Dict, Any
  from geometry.fixed_surfaces import get_surface_height_bounds
  from helpers.predictor_base import Predictor
 -from helpers.inverse_method import (
@@ -9,37 +9,29 @@ diff --git a/helpers/inverse_winding_intermediate.py b/helpers/inverse_winding_i
      compute_dr_dz, newton_corrector, recompute_thread_geometry,
      normal_curvature
  )
- from core.exceptions import GeometryOutOfBoundsError
- 
--
- def inverse_winding_hybrid(
-     surface: Any,
-     traj: Any,
-@@ -32,8 +31,11 @@ def inverse_winding_hybrid(
+@@ -35,7 +35,10 @@ def inverse_winding_hybrid(
      u_hist[0], v_hist[0] = u0, v0
      u_cur, v_cur = u0, v0
      use_optical_next = False
- 
 -    z_min, z_max = get_surface_height_bounds(surface)
-+    # Параметрические границы поверхности (не путать с высотными z-границами 3D)
 +    surf_u_min = getattr(surface, 'u_min', -np.inf)
 +    surf_u_max = getattr(surface, 'u_max',  np.inf)
 +    surf_v_min = getattr(surface, 'v_min', -np.inf)
 +    surf_v_max = getattr(surface, 'v_max',  np.inf)
- 
+
      # --- Открываем CSV-лог ---
      log_path = 'debug_log.csv'
-@@ -74,7 +76,7 @@ def inverse_winding_hybrid(
+@@ -76,7 +79,7 @@ def inverse_winding_hybrid(
          kappa_n_hist[i] = kappa_n
- 
+
          # --- 2. Выбор предиктора ---
 -        near_boundary = (u_cur < z_min + u_margin) or (u_cur > z_max - u_margin)
 +        near_boundary = (u_cur < surf_u_min + u_margin) or (u_cur > surf_u_max - u_margin)
          need_optical = (
              (abs(kappa_n) < eps_kappa) or
              near_boundary or
-@@ -111,8 +113,8 @@ def inverse_winding_hybrid(
- 
+@@ -113,8 +116,8 @@ def inverse_winding_hybrid(
+
          if u_pred is not None:
              # Проверка границ предсказания
 -            if u_pred < z_min or u_pred > z_max:
@@ -49,50 +41,42 @@ diff --git a/helpers/inverse_winding_intermediate.py b/helpers/inverse_winding_i
                  success = False
                  use_optical_next = True
                  note = 'PREDICTOR_OUT_OF_BOUNDS'
-@@ -135,7 +137,6 @@ def inverse_winding_hybrid(
+@@ -137,7 +140,6 @@ def inverse_winding_hybrid(
                          Ej, Fj, Gj = surface.first_fundamental_form(u_cur, v_cur)
                          ds_actual = np.sqrt(
                              max(Ej * du_j**2 + 2 * Fj * du_j * dv_j + Gj * dv_j**2, 0.0))
--                        ratio = 1.0  # ← БАГ: отключал детекцию скачков
+-                        ratio = 1.0  # ← ДОБАВИТЬ
                          try:
                              du_dz_k, dv_dz_k = compute_dr_dz(surface, traj, u_cur, v_cur, z_k)
                              E_f, F_f, G_f = surface.first_fundamental_form(u_cur, v_cur)
-@@ -146,7 +147,7 @@ def inverse_winding_hybrid(
+@@ -148,7 +150,7 @@ def inverse_winding_hybrid(
                              ds_expect = speed_expect * (z_next - z_k)
                              ds_ratio = ds_actual / ds_expect if ds_expect > 1e-12 else 1.0
- 
+
 -                            if ratio > jump_threshold or ratio < 1.0 / jump_threshold:
 +                            if ds_ratio > jump_threshold or ds_ratio < 1.0 / jump_threshold:
                                  note = f'JUMP_DETECTED_RATIO={ds_ratio:.2f}'
-                                 # не принимаем, пойдём на fallback
+                                 # не принимаем, пойдем на fallback
                              else:
-@@ -191,9 +192,9 @@ def inverse_winding_hybrid(
+@@ -195,9 +197,9 @@ def inverse_winding_hybrid(
                          try:
                              du_s, dv_s = compute_dr_dz(surface, traj, u_s, v_s, z_a)
                          except (ValueError, GeometryOutOfBoundsError):
                              du_s, dv_s = du_dz_k, dv_dz_k
- 
+
 -                        u_p = u_s + du_s * dz_sub
 -                        v_p = v_s + dv_s * dz_sub
 -                        u_p = np.clip(u_p, z_min, z_max)
 +                        u_p = np.clip(u_s + du_s * dz_sub, surf_u_min, surf_u_max)
 +                        v_p = np.clip(v_s + dv_s * dz_sub, surf_v_min, surf_v_max)
- 
+
                          u_c, v_c, Phi_c, nit, conv = newton_corrector(
                              surface, traj, u_p, v_p, z_b,
 diff --git a/predictors/optical_predictor.py b/predictors/optical_predictor.py
 --- a/predictors/optical_predictor.py
 +++ b/predictors/optical_predictor.py
-@@ -19,12 +19,11 @@ class OpticalPredictor(Predictor):
-             return None
-         direction = delta / length
-         
--        # ИСПРАВЛЕНИЕ: ищем ДАЛЬНЕЕ пересечение (выход луча), а не ближайшее.
--        # Ожидаемая длина нити ~ length. Пропускаем входное пересечение,
--        # начиная поиск с 0.7*length.
-+        # ИСПРАВЛЕНИЕ: ищем БЛИЖАЙШЕЕ пересечение, начиная с t_min=1e-6.
-+        # t_min=0.7*length пропускал ближайшую точку касания на выпуклых
-+        # поверхностях и находил ложное дальнее/обратное пересечение.
+@@ -22,7 +22,7 @@ class OpticalPredictor(Predictor):
+         # ИСПРАВЛЕНИЕ: ищем ДАЛЬНЕЕ пересечение (выход луча), а не ближайшее.
          t, r_opt = self.ray_tracer.trace(
              surface, R_next, direction,
 -            t_min=max(0.7 * length, 1e-6),
