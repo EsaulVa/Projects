@@ -64,11 +64,11 @@ class FixedRobustRevolutionIntersection(RobustRevolutionIntersection):
 
     def intersect(self, surface, origin, direction, t_min=1e-6, t_max=1e6, n_steps=1000):
         ro, rd = np.asarray(origin, dtype=float), np.asarray(direction, dtype=float)
-        z_min, z_max = get_surface_height_bounds(surface)
+        z_min, z_max = get_surface_height_bounds(surface)  # ← ПАТЧ
 
         def signed_distance(t):
             pt = ro + t * rd
-            if pt[2] < z_min or pt[2] > z_max:
+            if pt[2] < z_min or pt[2] > z_max:  # ← ПАТЧ
                 return -1e9
             r_ray = np.hypot(pt[0], pt[1])
             r_surf = surface.radius(pt[2])
