@@ -252,3 +252,19 @@ fig.update_layout(title='Чистая архитектура: Численное
                   width=1200, height=900, margin=dict(l=0, r=0, b=0, t=40))
 fig.write_html('corridor_clean_architecture.html')
 print("График сохранен в corridor_clean_architecture.html")
+
+import pandas as pd
+
+valid_mask = result.valid_mask
+s_valid = result.s_array[valid_mask]
+points_valid = result.safety_points[valid_mask]
+
+if len(points_valid) > 0:
+    df_tsn_valid = pd.DataFrame({
+        's': s_valid,
+        'X': points_valid[:, 0],
+        'Y': points_valid[:, 1],
+        'Z': points_valid[:, 2]
+    })
+    df_tsn_valid.to_csv('tsn_with_s.csv', index=False)
+    print(f"Сохранено {len(points_valid)} валидных точек ТСН (из {len(result.s_array)})")

@@ -150,7 +150,7 @@ def compute_dr_dz(surface, traj, u, v, z):
 
 def newton_corrector(surface, traj, u_pred, v_pred, z_target,
                      eps_Phi=1e-10, max_iter=20,
-                     max_step_u=100.0, max_step_v=0.5,
+                     max_step_u=20.0, max_step_v=0.5,
                      armijo_c=1e-4):
 # def newton_corrector(..., max_step_u=100.0, max_step_v=0.5, max_iter=50)
     """

@@ -168,17 +168,38 @@ class RobustRevolutionIntersection(IntersectionAlgorithm):
     def intersect(self, surface, origin, direction, t_min=1e-6, t_max=1e6, n_steps=1000):
         ro, rd = np.asarray(origin, dtype=float), np.asarray(direction, dtype=float)
         
+        z_min = getattr(surface, 'v_min', -np.inf)
+        z_max = getattr(surface, 'v_max', np.inf)
+        
+        # Расширяем зону поиска на 10% или минимум на 50мм, 
+        # чтобы ловить пересечения на границах сегментов
+        margin = max((z_max - z_min) * 0.1, 50.0)
+        z_search_min = z_min - margin
+        z_search_max = z_max + margin
+
         def signed_distance(t):
             pt = ro + t * rd
+            z_pt = pt[2]
+            
+            # Мягкий штраф вместо жесткого обрыва
+            # Если точка далеко за пределами — возвращаем большое положительное число
+            # (считаем, что мы "снаружи" бесконечного цилиндра)
+            if z_pt < z_search_min or z_pt > z_search_max:
+                return 1e9 
+            
             r_ray = np.hypot(pt[0], pt[1])
-            # Проверяем, что высота pt[2] находится в пределах поверхности
-            if hasattr(surface, 'v_min') and hasattr(surface, 'v_max'):
-                if pt[2] < surface.v_min or pt[2] > surface.v_max:
-                    return -1e9  # далеко от поверхности, отрицательное, чтобы не было ложного пересечения
-            r_surf = surface.radius(pt[2])
+            
+            # Безопасный вызов radius: если z выходит за пределы определения полинома,
+            # экстраполируем или используем ближайшее значение
+            try:
+                r_surf = surface.radius(z_pt)
+            except (ValueError, IndexError):
+                # Fallback: если radius не определен, считаем расстояние до оси огромным
+                return 1e9
+                
             return r_ray - r_surf
         
-        # Шаг 1: ищем интервал, где функция меняет знак
+        # Сканирование интервала
         dt = (t_max - t_min) / n_steps
         t_prev = t_min
         f_prev = signed_distance(t_prev)
@@ -186,31 +207,44 @@ class RobustRevolutionIntersection(IntersectionAlgorithm):
         for i in range(1, n_steps + 1):
             t_curr = t_min + i * dt
             f_curr = signed_distance(t_curr)
-            if abs(f_curr) < 1e-12:  # прямое попадание
+            
+            # Прямое попадание
+            if abs(f_curr) < 1e-12:
                 pt = ro + t_curr * rd
-                if hasattr(surface, 'v_min') and (pt[2] < surface.v_min or pt[2] > surface.v_max):
-                    continue
-                return t_curr, pt
-            if f_prev * f_curr < 0:  # смена знака
-                # Уточняем корень бисекцией
+                # Финальная проверка: точка должна быть СТРОГО в пределах поверхности
+                if z_min <= pt[2] <= z_max:
+                    return t_curr, pt
+                    
+            # Смена знака -> уточнение корня
+            if f_prev * f_curr < 0:
                 lo, hi = t_prev, t_curr
-                for _ in range(50):
-                    mid = (lo + hi) / 2
-                    f_mid = signed_distance(mid)
-                    if abs(f_mid) < 1e-12 or hi - lo < 1e-12:
-                        break
-                    if f_prev * f_mid < 0:
-                        hi = mid
-                    else:
-                        lo = mid
-                        f_prev = f_mid
-                t = (lo + hi) / 2
-                pt = ro + t * rd
-                return t, pt
+                # Бисекция/Брент для уточнения
+                try:
+                    from scipy.optimize import brentq
+                    t_root = brentq(signed_distance, lo, hi, xtol=1e-9)
+                except ValueError:
+                    # Ручная бисекция как fallback
+                    for _ in range(50):
+                        mid = (lo + hi) / 2.0
+                        f_mid = signed_distance(mid)
+                        if abs(f_mid) < 1e-12 or hi - lo < 1e-12:
+                            break
+                        if f_prev * f_mid < 0:
+                            hi = mid
+                        else:
+                            lo = mid
+                            f_prev = f_mid
+                    t_root = (lo + hi) / 2.0
+                    
+                pt = ro + t_root * rd
+                
+                # ВАЖНО: Возвращаем только если точка попала в реальные границы
+                if z_min <= pt[2] <= z_max:
+                    return t_root, pt
+            
             t_prev, f_prev = t_curr, f_curr
-        
+            
         return None, None
-
 # ======================================================================
 # 3. РЕЕСТР АЛГОРИТМОВ И ТРАССИРОВЩИК
 # ======================================================================
@@ -221,17 +255,50 @@ class RayTracer:
     def register(self, surface_class, algorithm):
         self.algorithms[surface_class] = algorithm
 
-    def trace(self, surface, origin, direction, t_min=1e-6, t_max=1e6):
+    # def trace(self, surface, origin, direction, t_min=1e-6, t_max=1e6):
+    def trace(self, surface, origin, direction, t_min=1e-6, t_max=1e6, current_uv=None):
         # Составная поверхность – перебираем сегменты
+        # Составная поверхность
         if hasattr(surface, 'segments'):
-            best_t, best_point = None, None
-            for seg in surface.segments:
+            best_t, best_point, best_seg_idx = None, None, None
+            
+            for idx, seg in enumerate(surface.segments):
                 algo = self.algorithms.get(type(seg))
                 if algo is None: continue
+                
                 t, pt = algo.intersect(seg, origin, direction, t_min, t_max)
-                if t is not None and (best_t is None or t < best_t):
-                    best_t, best_point = t, pt
+                
+                if t is not None:
+                    # Если передана текущая точка, проверяем "разумность" пересечения
+                    if current_uv is not None:
+                        try:
+                            # Пытаемся получить UV найденной точки на этом сегменте
+                            # (Предполагаем, что у сегмента есть uv_from_point или мы знаем его геометрию)
+                            # Для поверхностей вращения u обычно равно Z точки.
+                            u_candidate = pt[2] 
+                            u_cur = current_uv[0]
+                            
+                            # Если кандидат слишком далеко по высоте от текущего u — штраф
+                            if abs(u_candidate - u_cur) > 50.0: # Эвристический порог
+                                continue # Игнорируем далекие сегменты
+                        except:
+                            pass
+
+                    # Стандартный выбор ближайшего по t, если фильтры прошли
+                    if best_t is None or t < best_t:
+                        best_t, best_point, best_seg_idx = t, pt, idx
+                        
             return best_t, best_point
+        # ...
+        # if hasattr(surface, 'segments'):
+        #     best_t, best_point = None, None
+        #     for seg in surface.segments:
+        #         algo = self.algorithms.get(type(seg))
+        #         if algo is None: continue
+        #         t, pt = algo.intersect(seg, origin, direction, t_min, t_max)
+        #         if t is not None and (best_t is None or t < best_t):
+        #             best_t, best_point = t, pt
+        #     return best_t, best_point
         # Цельная поверхность
         algo = self.algorithms.get(type(surface))
         if algo:
