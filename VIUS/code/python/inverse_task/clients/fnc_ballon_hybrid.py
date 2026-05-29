@@ -254,18 +254,132 @@ optical_predictor = OpticalPredictor(ray_tracer)
 #     u_margin=20.0,       # ← сузить оптику до реального днища
 #     force_optical_after_fail=False
 # )
+# ============================================
+# ТЕСТОВЫЙ БЛОК: проверка знака градиента
+# ============================================
+from helpers.inverse_method_fixed import *
+print("\n" + "="*60)
+print("ЧИСЛЕННАЯ ПРОВЕРКА ЗНАКА ГРАДИЕНТА (тестовая точка из лога)")
+print("="*60)
+
+# Точка из вашего лога, где Phi взрывается (шаг ~255, z≈243)
+# Если хотите проверить на старте — замените u_test/v_test на u0, v0, а z_test на 0.0
+z_test  = 243.03
+u_test  = 36.088
+v_test  = 1.6256
+
+# --- Численный градиент (конечные разности) ---
+r0   = E2.position(u_test, v_test)
+m0   = E2.normal(u_test, v_test)
+R_t  = traj.R(z_test)
+Phi0 = float(np.dot(R_t - r0, m0))
+print(f"Точка: z={z_test}, u={u_test}, v={v_test}")
+print(f"Phi0 = {Phi0:.4e}")
+
+eps = 1e-5
+r_u   = E2.position(u_test + eps, v_test)
+m_u   = E2.normal(u_test + eps, v_test)
+Phi_u = float(np.dot(R_t - r_u, m_u))
+
+r_v   = E2.position(u_test, v_test + eps)
+m_v   = E2.normal(u_test, v_test + eps)
+Phi_v = float(np.dot(R_t - r_v, m_v))
+
+dPhi_du_num = (Phi_u - Phi0) / eps
+dPhi_dv_num = (Phi_v - Phi0) / eps
+print(f"\nЧИСЛЕННЫЙ:  dPhi/du = {dPhi_du_num: .4e}")
+print(f"ЧИСЛЕННЫЙ:  dPhi/dv = {dPhi_dv_num: .4e}")
+
+# --- Аналитический градиент ---
+delta = R_t - r0
+lam   = np.linalg.norm(delta)
+tau   = delta / lam
+up, vp = compute_tangent_components(E2, u_test, v_test, tau)
+dPhidu_ana, dPhidv_ana = compute_grad_Phi(E2, u_test, v_test, up, vp, lam)
+
+print(f"\nАНАЛИТИЧ.:  dPhi/du = {dPhidu_ana: .4e}")
+print(f"АНАЛИТИЧ.:  dPhi/dv = {dPhidv_ana: .4e}")
+
+# --- Сравнение ---
+ratio_u = dPhi_du_num / dPhidu_ana if abs(dPhidu_ana) > 1e-14 else float('inf')
+ratio_v = dPhi_dv_num / dPhidv_ana if abs(dPhidv_ana) > 1e-14 else float('inf')
+print(f"\nОТНОШЕНИЕ:  du = {ratio_u: .2f}   dv = {ratio_v: .2f}")
+
+if abs(ratio_u + 1.0) < 0.1 and abs(ratio_v + 1.0) < 0.1:
+    print("\n>>> ВНИМАНИЕ: АНАЛИТИЧЕСКИЙ ГРАДИЕНТ ИНВЕРТИРОВАН ПО ЗНАКУ!")
+    print(">>> Нужно убрать минус в compute_grad_Phi (inverse_method_fixed.py)")
+    print(">>> dPhidu =  lam * (...)  вместо  -lam * (...)\n")
+elif abs(ratio_u - 1.0) < 0.1 and abs(ratio_v - 1.0) < 0.1:
+    print("\n>>> ЗНАК ГРАДИЕНТА ВЕРНЫЙ.")
+    print(">>> Проблема в другом: вырожденность, max_bisect, или геометрия траектории.\n")
+else:
+    print(f"\n>>> НЕОДНОЗНАЧНО: отношения {ratio_u:.2f}, {ratio_v:.2f}")
+    print(">>> Возможно, точка на границе сегмента или метрика вырождена.\n")
+
+# --- Дополнительно: проверим, что max_bisect точно 4 ---
+print(f"Параметры вызова inverse_winding_hybrid:")
+print(f"  max_bisect = 4  (в коде явно задано)")
+print("="*60 + "\n")
+# --- Диагностика: расстояние от ТСН до оси Z ---
+z_test = 243.03
+R_t = traj.R(z_test)
+dist_to_axis = np.hypot(R_t[0], R_t[1])
+print(f"\n>>> Диагностика на z={z_test}:")
+print(f"    ТСН: R = {R_t}")
+print(f"    Расстояние ТСН до оси Z: {dist_to_axis:.3f}")
+print(f"    Радиус оправки E2 в u={u_test}: {E2.radius(u_test):.3f}")
+if dist_to_axis < E2.radius(u_test):
+    print("    !!! ТСН ПРОХОДИТ ВНУТРИ ОПРАВКИ — решения нет!")
+else:
+    print("    ТСН снаружи — решение должно существовать.")
+# ============================================
+# --- Диагностика: куда ведет compute_dr_dz ---
+from helpers.inverse_method_fixed import compute_dr_dz
+z_test = 243.03
+u_test = 36.088
+v_test = 1.6256
+
+du, dv = compute_dr_dz(E2, traj, u_test, v_test, z_test)
+print(f"\n>>> compute_dr_dz на проблемной точке:")
+print(f"    du/dz = {du:.6f}, dv/dz = {dv:.6f}")
+
+# Шаг Эйлера вперёд
+dz = 0.5
+u1 = u_test + du * dz
+v1 = v_test + dv * dz
+r1 = E2.position(u1, v1)
+m1 = E2.normal(u1, v1)
+Phi1 = float(np.dot(traj.R(z_test + dz) - r1, m1))
+print(f"    После шага dz={dz}: u={u1:.3f}, v={v1:.3f}, Phi={Phi1:.4e}")
+
+# Шаг Эйлера назад (проверка симметрии)
+u2 = u_test - du * dz
+v2 = v_test - dv * dz
+r2 = E2.position(u2, v2)
+m2 = E2.normal(u2, v2)
+Phi2 = float(np.dot(traj.R(z_test - dz) - r2, m2))
+print(f"    Шаг назад dz=-{dz}: u={u2:.3f}, v={v2:.3f}, Phi={Phi2:.4e}")
+
+print("=== Атрибуты поверхности E2 ===")
+print(f"  u_min = {getattr(E2, 'u_min', 'НЕТ')}")
+print(f"  u_max = {getattr(E2, 'u_max', 'НЕТ')}")
+print(f"  v_min = {getattr(E2, 'v_min', 'НЕТ')}")
+print(f"  v_max = {getattr(E2, 'v_max', 'НЕТ')}")
+print(f"  bounds = {E2.bounds if hasattr(E2, 'bounds') else 'НЕТ'}")
+print(f"  bound_opravka = {bound_opravka}")
+print("================================")
 result = inverse_winding_hybrid(
     E2, traj, u0, v0,
-    count_points=3000,        # для быстрой проверки
+    count_points=300,
     eps_Phi=1e-10,
     max_newton=20,
     max_bisect=4,
-    jump_threshold=5.0,      # ослабим — оптика может давать умеренные скачки
+    jump_threshold=3.0,       # ← вернём строгость
     predictor_dae=dae_predictor,
     predictor_optical=optical_predictor,
-    eps_kappa=1e10,          # кривизна отключена
-    u_margin=250.0,          # оптика на днище + цилиндр
-    force_optical_after_fail=True
+    eps_kappa=1e-1,         # ← оптика включается при |κ_n| < 0.1 (почти плоские участки)
+    u_margin=20.0,          # ← оптика включается у днища/крышки
+    force_optical_after_fail=True  # ← после фейла пробуем DAE снова, не застреваем на оптике
 )
 # Извлечение результатов
 z_vals = result['z_eval']

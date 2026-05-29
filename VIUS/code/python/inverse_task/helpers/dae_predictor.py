@@ -26,6 +26,12 @@ class DAEPredictor(Predictor):
             if len(t_vals) < 2:   # решатель не смог продвинуться
                 return None
             u_pred, v_pred = y_vals[-1]   # последняя точка соответствует z_next
+            # u_pred, v_pred = y_vals[-1]            
+            # Проверка: шаг не должен быть катастрофическим
+            du = u_pred - u_cur
+            dv = v_pred - v_cur
+            if abs(du) > 50.0 or abs(dv) > 5.0:  # разумные границы для вашей геометрии
+                return None  # отклоняем, пойдём на fallback/оптику
         except Exception:
             return None
 

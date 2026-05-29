@@ -136,7 +136,22 @@ def compute_dr_dz(surface, traj, u, v, z):
     if norm_grad_sq < 1e-14:
         return Rp_u, Rp_v
     
-    mu = -residual / norm_grad_sq
+    # mu = -residual / norm_grad_sq
+    
+    # du_dz = Rp_u + mu * grad_u
+    # dv_dz = Rp_v + mu * grad_v
+
+    # Регуляризация: ограничиваем mu, чтобы избежать взрыва при малых |∇Φ|
+    mu = -residual / (norm_grad_sq + 1e-8)
+    
+    # Дополнительное жёсткое ограничение
+    mu = np.clip(mu, -100.0, 100.0)
+    if norm_grad_sq < 1e-14:
+        return Rp_u, Rp_v
+    
+    # Регуляризация и ограничение mu
+    mu = -residual / (norm_grad_sq + 1e-8)
+    mu = max(-100.0, min(100.0, mu))
     
     du_dz = Rp_u + mu * grad_u
     dv_dz = Rp_v + mu * grad_v
