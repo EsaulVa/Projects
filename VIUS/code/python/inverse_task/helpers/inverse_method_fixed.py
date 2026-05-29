@@ -64,8 +64,8 @@ def compute_grad_Phi(surface, u, v, u_prime, v_prime, lam):
     
     # БЫЛО (баг): dPhidu = -lam * (...), dPhidv = -lam * (...)
     # СТАЛО (исправлено):
-    dPhidu = lam * (b_u_u * tau_u + b_u_v * tau_v)
-    dPhidv = lam * (b_v_u * tau_u + b_v_v * tau_v)
+    dPhidu = -lam * (b_u_u * tau_u + b_u_v * tau_v)
+    dPhidv = -lam * (b_v_u * tau_u + b_v_v * tau_v)
     return dPhidu, dPhidv
 
 
@@ -150,8 +150,9 @@ def compute_dr_dz(surface, traj, u, v, z):
 
 def newton_corrector(surface, traj, u_pred, v_pred, z_target,
                      eps_Phi=1e-10, max_iter=20,
-                     max_step_u=5.0, max_step_v=0.05,
+                     max_step_u=100.0, max_step_v=0.5,
                      armijo_c=1e-4):
+# def newton_corrector(..., max_step_u=100.0, max_step_v=0.5, max_iter=50)
     """
     Корректор Ньютона с демпфированием и линейным поиском.
     
@@ -213,8 +214,12 @@ def newton_corrector(surface, traj, u_pred, v_pred, z_target,
             
             if u_min is not None and u_max is not None:
                 u_try = np.clip(u_try, u_min, u_max)
+            # if v_min is not None and v_max is not None:
+            #     v_try = np.clip(v_try, v_min, v_max)
+            
             if v_min is not None and v_max is not None:
-                v_try = np.clip(v_try, v_min, v_max)
+                # Периодичность угла: mod 2π вместо обрезания
+                v_try = np.mod(v_try, 2 * np.pi)
             
             r_try = surface.position(u_try, v_try)
             m_try = surface.normal(u_try, v_try)
