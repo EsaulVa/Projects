@@ -370,14 +370,14 @@ print(f"  bound_opravka = {bound_opravka}")
 print("================================")
 result = inverse_winding_hybrid(
     E2, traj, u0, v0,
-    count_points=300,
+    count_points=5800,
     eps_Phi=1e-10,
     max_newton=20,
     max_bisect=4,
     jump_threshold=3.0,       # ← вернём строгость
     predictor_dae=dae_predictor,
     predictor_optical=optical_predictor,
-    eps_kappa=1e-1,         # ← оптика включается при |κ_n| < 0.1 (почти плоские участки)
+    eps_kappa=1e-2,         # ← оптика включается при |κ_n| < 0.1 (почти плоские участки)
     u_margin=20.0,          # ← оптика включается у днища/крышки
     force_optical_after_fail=True  # ← после фейла пробуем DAE снова, не застреваем на оптике
 )

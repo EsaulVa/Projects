@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.optimize import brentq
-from geometry.piecewise_polynomial_revolution import PiecewisePolynomialRevolution
+from geometry.piecewise_polynomial_revolution_fixed_v2 import PiecewisePolynomialRevolution
 
 def get_surface_height_bounds(surface):
     z_min = getattr(surface, 'u_min',

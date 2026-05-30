@@ -285,7 +285,7 @@ def main():
         ray_tracer=tracer,
         safe_distance=10.0
     )
-    result = calculator.calculate(num_points=200)
+    result = calculator.calculate(num_points=4000)
 
     # Сохраняем CSV (с колонками s, X, Y, Z, lambda, valid, phi)
     save_results_csv(result, 'tsn_shadow.csv')

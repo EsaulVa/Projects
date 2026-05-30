@@ -127,7 +127,7 @@ print("\n===== Расчет (Гибрид) =====")
 result = inverse_winding_robust(
     E2, traj_tsn, u0, v0,
     optical_predictor=opt_pred,  # <-- ВКЛЮЧЕНИЕ ГИБРИДА
-    count_points=300,
+    count_points=3000,
     eps_Phi=1e-6,
     max_newton=20,
     max_bisect=8,
