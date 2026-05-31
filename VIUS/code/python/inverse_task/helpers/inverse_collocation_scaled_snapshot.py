@@ -75,7 +75,20 @@ def solve_collocation_scaled(
         # ==================================
 
     # --- Масштабирование (ваш существующий код) ---
-    u_min, u_max = surface.u_bounds()
+    # u_min, u_max = surface.u_bounds()
+    # du = u_max - u_min
+    # scale_u = du if du > 0 else 1.0
+    # scale_v = 2.0 * np.pi
+        # --- Масштабирование (ваш существующий код) ---
+    u_min = getattr(surface, 'u_min', None)
+    u_max = getattr(surface, 'u_max', None)
+    if u_min is None or u_max is None:
+        # fallback, если вдруг есть метод или другие атрибуты
+        bounds = getattr(surface, 'u_bounds', lambda: (0.0, 1.0))()
+        if isinstance(bounds, (tuple, list)) and len(bounds) == 2:
+            u_min, u_max = bounds
+        else:
+            u_min, u_max = 0.0, 1.0
     du = u_max - u_min
     scale_u = du if du > 0 else 1.0
     scale_v = 2.0 * np.pi
@@ -137,14 +150,21 @@ def solve_collocation_scaled(
         return max_phi
 
     # --- Callback для least_squares ---
-    def callback(x, f, *args, **kwargs):
+        # --- Callback для least_squares ---
+    def callback(xk, *args, **kwargs):
         """
-        Вызывается после каждой итерации least_squares.
-        x — текущий вектор параметров (2N,)
-        f — текущий вектор невязок (M,)
+        Универсальная сигнатура для scipy >= 1.11.
+        xk может быть OptimizeResult (с полем .x) или просто массивом x.
         """
         nonlocal improve_count
-        # Вычисляем max |Phi| напрямую из x (точнее, чем из f, т.к. в f смешаны веса)
+        
+        # Распаковка x из intermediate_result
+        if hasattr(xk, 'x'):
+            x = np.copy(xk.x)
+        else:
+            x = np.copy(xk)
+        
+        # Вычисляем max |Phi| напрямую из x
         u = x[0::2]
         v = x[1::2]
         max_phi = 0.0
@@ -154,7 +174,7 @@ def solve_collocation_scaled(
             phi = abs(np.dot(traj.R(z_eval[k]) - r, m))
             if phi > max_phi:
                 max_phi = phi
-
+        
         # Если улучшились — сохраняем
         if max_phi < best_state['Phi']:
             best_state['Phi'] = max_phi
@@ -174,7 +194,6 @@ def solve_collocation_scaled(
                 if verbose:
                     print(f"[Snapshot] New best max|Phi|={max_phi:.3e} "
                           f"(iter {best_state['iter']}) -> {snapshot_file}")
-
     # --- Запуск оптимизатора ---
     t0 = time.time()
     sol = least_squares(
