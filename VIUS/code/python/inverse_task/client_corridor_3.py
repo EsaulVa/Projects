@@ -283,9 +283,9 @@ def main():
         mandrel_surface=E2,
         safety_surface=E1,
         ray_tracer=tracer,
-        safe_distance=10.0
+        safe_distance=1.0
     )
-    result = calculator.calculate(num_points=200)
+    result = calculator.calculate(num_points=40000)
 
     # Сохраняем CSV (с колонками s, X, Y, Z, lambda, valid, phi)
     save_results_csv(result, 'tsn_shadow.csv')

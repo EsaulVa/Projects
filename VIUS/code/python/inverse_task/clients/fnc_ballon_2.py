@@ -1,4 +1,13 @@
+import sys
+from pathlib import Path
+# Добавляем корневую директорию проекта (родительскую по отношению к папке gui)
+root_dir = Path(__file__).parent.parent
+sys.path.insert(0, str(root_dir))
+from helpers.inverse_winding_intermediate import inverse_winding_hybrid
+
+
 import numpy as np
+# Добавляем корневую директорию проекта (родительскую по отношению к папке gui)
 from geometry.composite_surface import CompositeSurface, CylinderSegment, SphereSegment
 from core.const_dev_law import ConstantDeviation
 from forward_winding.forward_winding_builder import ForwardWindingBuilder
@@ -102,10 +111,23 @@ else:
 print(f"После коррекции: u={u0_int:.4f}, v={v0_int:.4f}, Φ={Phi0:.2e}, сходимость={conv}")
 
 # 5. Обратная задача на E2
-result = inverse_winding_v4(
+# result = inverse_winding_v4(
+#     E2, traj, u0_int, v0_int,
+#     count_points=300,
+#     eps_Phi=1e-10, max_newton=7, max_bisect=4, jump_threshold=3.0
+# )
+result = inverse_winding_hybrid(
     E2, traj, u0_int, v0_int,
-    count_points=300,
-    eps_Phi=1e-10, max_newton=7, max_bisect=4, jump_threshold=3.0
+    count_points=3000,
+    eps_Phi=1e-10,
+    max_newton=20,
+    max_bisect=7,
+    jump_threshold=3.0,       # ← вернём строгость
+    # predictor_dae=dae_predictor,
+    # predictor_optical=optical_predictor,
+    eps_kappa=1e-2,         # ← оптика включается при |κ_n| < 0.1 (почти плоские участки)
+    u_margin=10.0,          # ← оптика включается у днища/крышки
+    force_optical_after_fail=True  # ← после фейла пробуем DAE снова, не застреваем на оптике
 )
 z_vals = result['z_eval']          # ← вот она, недостающая строка
 line_E2 = result['points_3d']

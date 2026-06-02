@@ -65,7 +65,7 @@ print(f"Длина траектории: {traj.total_length:.3f}")
 # ----------------------------------------------------------------------
 # 3. Внутренний баллон E2 (оправка)
 # ----------------------------------------------------------------------
-R2, L2 = 1.5, 5
+R2, L2 = 1, 4
 z2_min, z2_max = -L2/2, L2/2
 cyl2 = CylinderSegment(R2, z2_min, z2_max)
 E2 = CompositeSurface([SphereSegment(R2, z2_min, is_upper=False),
@@ -89,14 +89,18 @@ else:
 # v_guess=v0_ext
 
 print(f"Начальное приближение: u={u_guess:.4f}, v={v_guess:.4f}")
-
-if hasattr(E2, 'project_point'):
-    u0_int, v0_int, Phi0, conv = E2.project_point(R0, u_guess, v_guess,
-                                                   eps_Phi=1e-12, max_iter=20)
-else:
+try:
+    if hasattr(E2, 'project_point'):
+        u0_int, v0_int, Phi0, conv = E2.project_point(R0, u_guess, v_guess,
+                                                    eps_Phi=1e-12, max_iter=20)
+    else:
+        dummy = FixedPointTrajectory(R0)
+        u0_int, v0_int, Phi0, n, conv = newton_corrector(E2, dummy, u_guess, v_guess, 0.0,
+                                                        eps_Phi=1e-12, max_iter=20)
+finally:
     dummy = FixedPointTrajectory(R0)
     u0_int, v0_int, Phi0, n, conv = newton_corrector(E2, dummy, u_guess, v_guess, 0.0,
-                                                     eps_Phi=1e-12, max_iter=20)
+                                                        eps_Phi=1e-12, max_iter=20)
 print(f"После коррекции: u={u0_int:.4f}, v={v0_int:.4f}, Φ={Phi0:.2e}, сходимость={conv}")
 
 # ----------------------------------------------------------------------

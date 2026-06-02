@@ -29,44 +29,63 @@ def normal_curvature(surface, u, v, u_prime, v_prime):
     if abs(I_val) < 1e-15:
         return 0.0
     return II_val / I_val
-
-
 def compute_grad_Phi(surface, u, v, u_prime, v_prime, lam):
-    """
-    Ковариантные компоненты ∂Φ/∂u^α.
-    
-    ИСПРАВЛЕНИЕ: убран лишний минус. Согласно отчёту, формула (6):
-        g_u = b_{ij} \dot{u}^j
-    Здесь b_{ij} — компоненты II формы, \dot{u}^j — контравариантные компоненты
-    вектора нити. Минуса нет.
-    
-    Ранее стояло `-lam * (...)`, что давало знак, противоположный градиенту Φ.
-    Корректор Ньютона (u -= Phi/Ng * grad_u) при этом двигал точку ВДОЛЬ
-    градиента, увеличивая |Phi| вместо уменьшения.
-    """
-    E, F, G = surface.first_fundamental_form(u, v)
     L, M, N_ff = surface.second_fundamental_form(u, v)
-    det = E * G - F * F
-    if abs(det) < 1e-14:
-        raise ValueError("Вырожденная метрика в grad_Phi")
-    
-    guu = G / det
-    guv = -F / det
-    gvv = E / det
-    
-    tau_u = E * u_prime + F * v_prime
-    tau_v = F * u_prime + G * v_prime
-    
-    b_u_u = guu * L + guv * M
-    b_u_v = guv * L + gvv * M
-    b_v_u = guu * M + guv * N_ff
-    b_v_v = guv * M + gvv * N_ff
-    
-    # БЫЛО (баг): dPhidu = -lam * (...), dPhidv = -lam * (...)
-    # СТАЛО (исправлено):
-    dPhidu = -lam * (b_u_u * tau_u + b_u_v * tau_v)
-    dPhidv = -lam * (b_v_u * tau_u + b_v_v * tau_v)
+    # g_α = b_{αβ} · τ^β  (ковариантные компоненты градиента)
+    dPhidu = -lam * (L * u_prime + M * v_prime)
+    dPhidv = -lam * (M * u_prime + N_ff * v_prime)
     return dPhidu, dPhidv
+# def compute_grad_Phi(surface, u, v, u_prime, v_prime, lam):
+#     """
+#     ∂Φ/∂u^α = -λ · b_{αβ} · τ^β
+    
+#     u_prime, v_prime — это τ^β (контравариантные).
+#     b_{αβ} — вторая фундаментальная форма, ковариантная.
+#     """
+#     L, M, N_ff = surface.second_fundamental_form(u, v)
+    
+#     # b_{1β} τ^β = L * τ^1 + M * τ^2
+#     dPhidu = -lam * (L * u_prime + M * v_prime)
+#     # b_{2β} τ^β = M * τ^1 + N_ff * τ^2
+#     dPhidv = -lam * (M * u_prime + N_ff * v_prime)
+    
+#     return dPhidu, dPhidv
+# def compute_grad_Phi(surface, u, v, u_prime, v_prime, lam):
+#     """
+#     Ковариантные компоненты ∂Φ/∂u^α.
+    
+#     ИСПРАВЛЕНИЕ: убран лишний минус. Согласно отчёту, формула (6):
+#         g_u = b_{ij} \dot{u}^j
+#     Здесь b_{ij} — компоненты II формы, \dot{u}^j — контравариантные компоненты
+#     вектора нити. Минуса нет.
+    
+#     Ранее стояло `-lam * (...)`, что давало знак, противоположный градиенту Φ.
+#     Корректор Ньютона (u -= Phi/Ng * grad_u) при этом двигал точку ВДОЛЬ
+#     градиента, увеличивая |Phi| вместо уменьшения.
+#     """
+#     E, F, G = surface.first_fundamental_form(u, v)
+#     L, M, N_ff = surface.second_fundamental_form(u, v)
+#     det = E * G - F * F
+#     if abs(det) < 1e-14:
+#         raise ValueError("Вырожденная метрика в grad_Phi")
+    
+#     guu = G / det
+#     guv = -F / det
+#     gvv = E / det
+    
+#     tau_u = E * u_prime + F * v_prime
+#     tau_v = F * u_prime + G * v_prime
+    
+#     b_u_u = guu * L + guv * M
+#     b_u_v = guv * L + gvv * M
+#     b_v_u = guu * M + guv * N_ff
+#     b_v_v = guv * M + gvv * N_ff
+    
+#     # БЫЛО (баг): dPhidu = -lam * (...), dPhidv = -lam * (...)
+#     # СТАЛО (исправлено):
+#     dPhidu = -lam * (b_u_u * tau_u + b_u_v * tau_v)
+#     dPhidv = -lam * (b_v_u * tau_u + b_v_v * tau_v)
+#     return dPhidu, dPhidv
 
 
 def inverse_metric(surface, u, v):
@@ -133,30 +152,49 @@ def compute_dr_dz(surface, traj, u, v, z):
                     + 2 * guv * dPhi_du * dPhi_dv 
                     + gvv * dPhi_dv**2)
     
-    if norm_grad_sq < 1e-14:
-        return Rp_u, Rp_v
+    # if norm_grad_sq < 1e-14:
+    #     return Rp_u, Rp_v
+    if norm_grad_sq < 1e-6:  # <--- ПОРОГ ВКЛЮЧЕНИЯ ОПТИКИ
+        # DAE не может удержать связь, возвращаем только кинематику
+        # Гибридный алгоритм должен это понять и переключиться на лучи
+        return Rp_u, Rp_v 
     
-    # mu = -residual / norm_grad_sq
-    
-    # du_dz = Rp_u + mu * grad_u
-    # dv_dz = Rp_v + mu * grad_v
-
-    # Регуляризация: ограничиваем mu, чтобы избежать взрыва при малых |∇Φ|
-    mu = -residual / (norm_grad_sq + 1e-8)
-    
-    # Дополнительное жёсткое ограничение
-    mu = np.clip(mu, -100.0, 100.0)
-    if norm_grad_sq < 1e-14:
-        return Rp_u, Rp_v
-    
-    # Регуляризация и ограничение mu
-    mu = -residual / (norm_grad_sq + 1e-8)
-    mu = max(-100.0, min(100.0, mu))
+    mu = -residual / norm_grad_sq  # БЕЗ 1e-8 и БЕЗ клиппинга!
     
     du_dz = Rp_u + mu * grad_u
     dv_dz = Rp_v + mu * grad_v
     
+    # Ограничивать надо не mu, а итоговую длину шага по поверхности!
+    E, F, G = surface.first_fundamental_form(u, v)
+    speed_sq = E * du_dz**2 + 2 * F * du_dz * dv_dz + G * dv_dz**2
+    max_speed = 50.0 # Макс. допустимая скорость перемещения по оправке (мм/ед.парам.)
+    if speed_sq > max_speed**2:
+        scale = max_speed / np.sqrt(speed_sq)
+        du_dz *= scale
+        dv_dz *= scale
+        
     return du_dz, dv_dz
+    # # mu = -residual / norm_grad_sq
+    
+    # # du_dz = Rp_u + mu * grad_u
+    # # dv_dz = Rp_v + mu * grad_v
+
+    # # Регуляризация: ограничиваем mu, чтобы избежать взрыва при малых |∇Φ|
+    # mu = -residual / (norm_grad_sq + 1e-8)
+    
+    # # Дополнительное жёсткое ограничение
+    # mu = np.clip(mu, -100.0, 100.0)
+    # if norm_grad_sq < 1e-14:
+    #     return Rp_u, Rp_v
+    
+    # # Регуляризация и ограничение mu
+    # mu = -residual / (norm_grad_sq + 1e-8)
+    # mu = max(-100.0, min(100.0, mu))
+    
+    # du_dz = Rp_u + mu * grad_u
+    # dv_dz = Rp_v + mu * grad_v
+    
+    # return du_dz, dv_dz
 
 
 # ======================================================================
@@ -219,16 +257,25 @@ def newton_corrector(surface, traj, u_pred, v_pred, z_target,
             step_u = alpha * Phi_cur / Ng * dir_u
             step_v = alpha * Phi_cur / Ng * dir_v
             
-            if abs(step_u) > max_step_u:
-                step_u = max_step_u if step_u > 0 else -max_step_u
-            if abs(step_v) > max_step_v:
-                step_v = max_step_v if step_v > 0 else -max_step_v
+            # if abs(step_u) > max_step_u:
+            #     step_u = max_step_u if step_u > 0 else -max_step_u
+            # if abs(step_v) > max_step_v:
+            #     step_v = max_step_v if step_v > 0 else -max_step_v
+            # Вместо независимого клиппинга:
+            E, F, G = surface.first_fundamental_form(u_c, v_c)
+            ds_sq = E * step_u**2 + 2 * F * step_u * step_v + G * step_v**2
+            max_ds = 30.0  # максимальный шаг в мм по поверхности
+
+            if ds_sq > max_ds**2:
+                scale = max_ds / np.sqrt(ds_sq)
+                step_u *= scale
+                step_v *= scale
             
             u_try = u_c - step_u
             v_try = v_c - step_v
             
-            if u_min is not None and u_max is not None:
-                u_try = np.clip(u_try, u_min, u_max)
+            # if u_min is not None and u_max is not None:
+            #     u_try = np.clip(u_try, u_min, u_max)
             # if v_min is not None and v_max is not None:
             #     v_try = np.clip(v_try, v_min, v_max)
             

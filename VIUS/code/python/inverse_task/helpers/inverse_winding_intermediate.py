@@ -142,6 +142,14 @@ def inverse_winding_hybrid(
                         eps_Phi=eps_Phi, max_iter=max_newton
                     )
                     Phi_after = float(Phi_c)
+                    # Проверка на выход за границы оправки
+                    # if u_c >= surface.u_max - 1.0: # Если до края осталось меньше 1 мм
+                    #     print(f"Достигнут верхний край оправки (u={u_c:.1f}). Остановка.")
+                    #     # Обрезаем массивы результатов до текущего шага
+                    #     u_hist = u_hist[:i+2]
+                    #     v_hist = v_hist[:i+2]
+                    #     # ... и так далее
+                    #     break
 
                     if conv and abs(Phi_c) < eps_Phi:
                         # Проверка скачка

@@ -1,4 +1,10 @@
 # client_cylinder_intermediate.py
+import sys
+from pathlib import Path
+
+# Добавляем корневую директорию проекта (родительскую по отношению к папке gui)
+root_dir = Path(__file__).parent.parent
+sys.path.insert(0, str(root_dir))
 import numpy as np
 import matplotlib.pyplot as plt
 from geometry.cylinder import CylinderAnalytical

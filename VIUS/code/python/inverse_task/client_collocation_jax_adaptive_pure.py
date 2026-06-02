@@ -281,7 +281,7 @@ if __name__ == "__main__":
     t_start = time.time()
     result, history = solve_adaptive_pure(
         E2, traj, u0, v0,
-        N_start=40, tresh=1e-3, max_iters=1,
+        N_start=40, tresh=1e-3, max_iters=10,
         w_Phi=10.0, w_diff=1e-2, w_smooth=1e-4,
         max_nfev=120000, tol=1e-8,
         snapshot_path='adaptive_pure_snapshot.npz',

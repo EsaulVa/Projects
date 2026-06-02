@@ -33,7 +33,7 @@ print(f"E2: u∈[{E2.u_min}, {E2.u_max}], R_cyl={cyl_r_opravka}")
 
 
 # ---------- 2. Загрузка ТСН ----------
-df = pd.read_csv('tsn_shadow.csv')
+df = pd.read_csv('tsn_shadow_homothetic.csv')
 df_valid = df[df['valid'] == True].copy()
 points_tsn = df_valid[['X', 'Y', 'Z']].values
 print(f"ТСН: {len(points_tsn)} валидных точек")
@@ -76,10 +76,10 @@ print("\n===== Коллокация на баллоне =====")
 # Начнём с N=50 для скорости, потом можно N=100
 result = solve_collocation(
     E2, traj, u0, v0,
-    count_points=50,
-    w_Phi=1.0, w_diff=1.0, w_smooth=0.0,
-    init_method='dae',
-    max_nfev=10000, tol=1e-8,
+    count_points=20,
+    w_Phi=100.0, w_diff=1e-2, w_smooth=1e-2,
+    init_method='radial',
+    max_nfev=100, tol=1e-8,
     verbose=True
 )
 

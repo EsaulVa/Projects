@@ -1,13 +1,17 @@
 import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 import scipy.io
 import sys
 from pathlib import Path
 
+# from helpers.inverse_method import inverse_winding_v4
+
 # Добавляем корневую директорию проекта (родительскую по отношению к папке gui)
 root_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(root_dir))
+from helpers.inverse_method import inverse_winding_v4
 from geometry.piecewise_polynomial_revolution_fixed_v2 import PiecewisePolynomialRevolution
 from core.trajectory import Trajectory
 from solvers.scipy_solver import SciPySolver
@@ -49,33 +53,54 @@ cyl_r_safe = 352.387
 E1 = FixedPiecewisePolynomialRevolution(phi_c_safe,   R_c_safe,   bound_safe,   cyl_r_safe)
 
 # 1. Загружаем ТСН из .mat
-data = scipy.io.loadmat('winding_trajectory_result.mat')
-z_offset = (bound_safe[3] - bound_opravka[3]) / 2  # (955.956 - 768.54)/2 ≈ 93.708
-X, Y, Z = data['X_tsn'].flatten(), data['Y_tsn'].flatten(), data['Z_tsn'].flatten()
-Z_local = Z - z_offset
-points_tsn = np.column_stack([X, Y, Z_local])
-count_points = len(X)
+# data = scipy.io.loadmat('winding_trajectory_result.mat')
+# z_offset = (bound_safe[3] - bound_opravka[3]) / 2  # (955.956 - 768.54)/2 ≈ 93.708
+# X, Y, Z = data['X_tsn'].flatten(), data['Y_tsn'].flatten(), data['Z_tsn'].flatten()
+# Z_local = Z - z_offset
+# points_tsn = np.column_stack([X, Y, Z_local])
+# count_points = len(X)
 
 
 
-print(f"z_offset = {z_offset:.3f} мм")
-# points_tsn = points_tsn[::-1].copy()
-# traj = Trajectory.from_points(points_tsn, method='cubic')
-traj = Trajectory.from_points(points_tsn, method='cubic')  # cubic для стабильности
+# print(f"z_offset = {z_offset:.3f} мм")
+# # points_tsn = points_tsn[::-1].copy()
+# # traj = Trajectory.from_points(points_tsn, method='cubic')
+# traj = Trajectory.from_points(points_tsn, method='cubic')  # cubic для стабильности
 # traj = Trajectory.from_points(points_tsn, method='nurbs', degree=7)
+
+# ---------- 2. Загрузка ТСН ----------
+df = pd.read_csv('tsn_shadow_homothetic.csv')
+df_valid = df[df['valid'] == True].copy()
+points_tsn = df_valid[['X', 'Y', 'Z']].values
+print(f"ТСН: {len(points_tsn)} валидных точек")
+
+# Траектория ТСН
+traj = Trajectory.from_points(points_tsn, method='cubic')
 print(f"Z начала: {points_tsn[0,2]:.3f}, Z конца: {points_tsn[-1,2]:.3f}")
 print(f"R'(0) = {traj.R_deriv(0.0)}")
 if points_tsn[0, 2] > points_tsn[-1, 2]:
     points_tsn = points_tsn[::-1].copy()
     print("Инвертировано: ТСН шла сверху вниз")
+R0 = traj.R(0.0)
+u0, v0 = safe_initial_point(E2, R0)
+r0 = E2.position(u0, v0)
+m0 = E2.normal(u0, v0)
+Phi0 = np.dot(R0 - r0, m0)
+print(f"Начальная невязка |Φ0| = {abs(Phi0):.2e}")
+R0 = traj.R(0.0)
+u0, v0 = safe_initial_point(E2, R0)
+u0, v0, Phi0, _, conv = newton_corrector(
+    E2, traj, u0, v0, 0.0, eps_Phi=1e-12, max_iter=50
+)
+assert conv and abs(Phi0) < 1e-10, "Начальная точка не скорректировалась"
 # Загружаем эталонную линию укладки из LU_data.mat
-try:
-    data_l = scipy.io.loadmat('LU_data.mat')
-    r_etalon = data_l['r']  # массив 545x3
-    print(f"Эталонная линия укладки загружена: {r_etalon.shape[0]} точек")
-except FileNotFoundError:
-    print("Файл LU_data.mat не найден – эталонная линия не будет показана.")
-    r_etalon = None
+# try:
+#     data_l = df
+#     r_etalon = data_l['r']  # массив 545x3
+#     print(f"Эталонная линия укладки загружена: {r_etalon.shape[0]} точек")
+# except FileNotFoundError:
+#     print("Файл LU_data.mat не найден – эталонная линия не будет показана.")
+#     r_etalon = None
 
 # if r_etalon is not None:
 #     u0 = r_etalon[0, 2]
@@ -92,17 +117,19 @@ except FileNotFoundError:
 #     E2, dummy, u_guess, v_guess, 0.0,
 #     eps_Phi=1e-12, max_iter=50
 # )
-if r_etalon is not None:
-    u0 = r_etalon[0, 2]
-    v0 = np.arctan2(r_etalon[0, 1], r_etalon[0, 0])
-    # Небольшая коррекция на случай, если эталон не идеален
-    u0, v0, Phi0, _, conv = newton_corrector(
-        E2, traj, u0, v0, 0.0, eps_Phi=1e-10, max_iter=20
-    )
-    print(f"Начальная точка: u={u0:.4f}, v={v0:.4f}, Φ={Phi0:.2e}, conv={conv}")
-else:
-    R0 = traj.R(0.0)
-    u0, v0 = safe_initial_point(E2, R0)
+# if r_etalon is not None:
+#     u0 = r_etalon[0, 2]
+#     v0 = np.arctan2(r_etalon[0, 1], r_etalon[0, 0])
+#     # Небольшая коррекция на случай, если эталон не идеален
+#     u0, v0, Phi0, _, conv = newton_corrector(
+#         E2, traj, u0, v0, 0.0, eps_Phi=1e-10, max_iter=20
+#     )
+#     print(f"Начальная точка: u={u0:.4f}, v={v0:.4f}, Φ={Phi0:.2e}, conv={conv}")
+# else:
+#     R0 = traj.R(0.0)
+#     u0, v0 = safe_initial_point(E2, R0)
+R0 = traj.R(0.0)
+u0, v0 = safe_initial_point(E2, R0)
 # print(f"Начальная точка: u={u0:.4f}, v={v0:.4f}, Φ={Phi0:.2e}, conv={conv}")
 
 # # Коррекция начальной точки до касания Φ = 0
@@ -142,6 +169,8 @@ else:
 # # --- Тест 1: Проверка compute_dr_dz в стартовой точке ---
 # z0 = 0.0
 dz = traj.total_length / 300  # шаг, соответствующий count_points=300
+# Проверка: ТСН всегда снаружи оправки?
+
 # du, dv = compute_dr_dz(E2, traj, u0, v0, z0)
 
 # u1_euler = u0 + du * dz
@@ -240,6 +269,19 @@ ray_tracer = RayTracer()
 ray_tracer.register(FixedPiecewisePolynomialRevolution, FixedRobustRevolutionIntersection())
 optical_predictor = OpticalPredictor(ray_tracer)
 
+z_check = np.linspace(0, traj.total_length, 500)
+for i, z in enumerate(z_check):
+    R_t = traj.R(z_check[i])
+    r_xy = np.hypot(R_t[0], R_t[1])
+    # u параметр для поверхности вращения - это Z координата
+    u_param = R_t[2] 
+    # САМОЕ ВАЖНОЕ: ограничиваем Z границами оправки!
+    u_param = np.clip(R_t[2], E2.u_min, E2.u_max) 
+    if hasattr(E2, 'radius'):
+        r_safe = E2.radius(u_param)
+        if r_xy < r_safe - 1.0: # -1мм допуск
+            print(f"!!! АВАРИЯ: ТСН ныряет внутрь оправки на z={z:.1f}, R_ts={r_xy:.1f}, R_opr={r_safe:.1f}")
+            break
 # result = inverse_winding_hybrid(
 #     E2, traj, u0, v0,
 #     count_points=200,    # достаточно, чтобы увидеть проблему
@@ -370,17 +412,23 @@ print(f"  bound_opravka = {bound_opravka}")
 print("================================")
 result = inverse_winding_hybrid(
     E2, traj, u0, v0,
-    count_points=5800,
+    count_points=60,
     eps_Phi=1e-10,
     max_newton=20,
-    max_bisect=4,
-    jump_threshold=3.0,       # ← вернём строгость
+    max_bisect=7,
+    jump_threshold=1,       # ← вернём строгость
     predictor_dae=dae_predictor,
     predictor_optical=optical_predictor,
-    eps_kappa=1e-2,         # ← оптика включается при |κ_n| < 0.1 (почти плоские участки)
-    u_margin=20.0,          # ← оптика включается у днища/крышки
-    force_optical_after_fail=True  # ← после фейла пробуем DAE снова, не застреваем на оптике
+    eps_kappa=1e-7,         # ← оптика включается при |κ_n| < 0.1 (почти плоские участки)
+    u_margin=10.0,          # ← оптика включается у днища/крышки
+    force_optical_after_fail=False  # ← после фейла пробуем DAE снова, не застреваем на оптике
 )
+# 5. Обратная задача на E2
+# result = inverse_winding_v4(
+#     E2, traj, u0, v0,
+#     count_points=3000,
+#     eps_Phi=1e-10, max_newton=7, max_bisect=4, jump_threshold=3.0
+# )
 # Извлечение результатов
 z_vals = result['z_eval']
 u_hist = result['u']
