@@ -85,8 +85,8 @@ print(f"{'='*60}")
 
 result = solve_collocation_jax(
     E2, traj, u0, v0,
-    count_points=50,          # начнём с 50 для скорости
-    w_Phi=0, w_diff=1e-2, w_smooth=100,
+    count_points=1000,          # начнём с 50 для скорости
+    w_Phi=1e-4, w_diff=10, w_smooth=1e-2,
     init_method='radial',
     jac_mode='3-point',         # 'jax' для exact (медленнее), '3-point' для скорости
     max_nfev=200,
@@ -158,7 +158,7 @@ fig2.add_trace(go.Surface(x=X2, y=Y2, z=Z2, opacity=0.3, colorscale='Reds', show
 fig2.add_trace(go.Scatter3d(x=tsn_pts[:,0], y=tsn_pts[:,1], z=tsn_pts[:,2],
                               mode='lines', line=dict(color='blue', width=4)))
 fig2.add_trace(go.Scatter3d(x=pts_snap[:,0], y=pts_snap[:,1], z=pts_snap[:,2],
-                              mode='lines+markers', line=dict(color='orange', width=3),
+                              mode='lines', line=dict(color='magenta', width=3),
                               marker=dict(size=3), name='ЛУ (SNAPSHOT)'))
 fig2.update_layout(title=f'JAX Snapshot (iter {snap["iter"]}, max|Phi|={snap["max_Phi"]:.2e})',
                    scene_aspectmode='data', width=1200, height=900)

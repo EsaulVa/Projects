@@ -466,7 +466,7 @@ def main():
         safety_surface=E1,
         safe_distance=0
     )
-    result = calculator.calculate(num_points=4000, t_max=1500.0)
+    result = calculator.calculate(num_points=60000, t_max=1500.0)
 
     # ===== Сохранение и визуализация =====
     save_results_csv(result, 'tsn_shadow_ellipsoid.csv')
