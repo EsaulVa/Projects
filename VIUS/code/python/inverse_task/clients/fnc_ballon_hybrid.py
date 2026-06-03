@@ -69,7 +69,7 @@ E1 = FixedPiecewisePolynomialRevolution(phi_c_safe,   R_c_safe,   bound_safe,   
 # traj = Trajectory.from_points(points_tsn, method='nurbs', degree=7)
 
 # ---------- 2. Загрузка ТСН ----------
-df = pd.read_csv('tsn_shadow_homothetic.csv')
+df = pd.read_csv('tsn_shadow_ellipsoid.csv')
 df_valid = df[df['valid'] == True].copy()
 points_tsn = df_valid[['X', 'Y', 'Z']].values
 print(f"ТСН: {len(points_tsn)} валидных точек")
@@ -86,13 +86,13 @@ u0, v0 = safe_initial_point(E2, R0)
 r0 = E2.position(u0, v0)
 m0 = E2.normal(u0, v0)
 Phi0 = np.dot(R0 - r0, m0)
-print(f"Начальная невязка |Φ0| = {abs(Phi0):.2e}")
-R0 = traj.R(0.0)
-u0, v0 = safe_initial_point(E2, R0)
-u0, v0, Phi0, _, conv = newton_corrector(
-    E2, traj, u0, v0, 0.0, eps_Phi=1e-12, max_iter=50
-)
-assert conv and abs(Phi0) < 1e-10, "Начальная точка не скорректировалась"
+# print(f"Начальная невязка |Φ0| = {abs(Phi0):.2e}")
+# R0 = traj.R(0.0)
+# u0, v0 = safe_initial_point(E2, R0)
+# u0, v0, Phi0, _, conv = newton_corrector(
+#     E2, traj, u0, v0, 0.0, eps_Phi=1e-12, max_iter=50
+# )
+# assert conv and abs(Phi0) < 1e-10, "Начальная точка не скорректировалась"
 # Загружаем эталонную линию укладки из LU_data.mat
 # try:
 #     data_l = df

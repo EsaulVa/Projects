@@ -30,9 +30,17 @@ cyl_r = 251.705
 E2 = FixedPiecewisePolynomialRevolution(phi_c, R_c, bounds, cyl_r)
 print(f"E2: u∈[{E2.u_min}, {E2.u_max}]")
 
+# ---------- 5. Загрузка эталона для сравнения ----------
+try:
+    data_l = scipy.io.loadmat('LU_data.mat')
+    r_etalon = data_l['r']
+    print(f"Эталон: {r_etalon.shape[0]} точек")
+except FileNotFoundError:
+    r_etalon = None
+    print("Эталон не найден")
 
 # ---------- 2. ТСН ----------
-df = pd.read_csv('tsn_shadow.csv')
+df = pd.read_csv('tsn_shadow_ellipsoid.csv')
 df_valid = df[df['valid'] == True].copy()
 points_tsn = df_valid[['X', 'Y', 'Z']].values
 traj = Trajectory.from_points(points_tsn, method='cubic')
@@ -78,10 +86,10 @@ print(f"{'='*60}")
 result = solve_collocation_jax(
     E2, traj, u0, v0,
     count_points=50,          # начнём с 50 для скорости
-    w_Phi=1.0, w_diff=1.0, w_smooth=0.05,
+    w_Phi=0, w_diff=1e-2, w_smooth=100,
     init_method='radial',
     jac_mode='3-point',         # 'jax' для exact (медленнее), '3-point' для скорости
-    max_nfev=20000,
+    max_nfev=200,
     tol=1e-8,
     snapshot_path='best_snapshot.npz',
     verbose=True
@@ -119,6 +127,12 @@ fig.add_trace(go.Scatter3d(x=line_E2[:,0], y=line_E2[:,1], z=line_E2[:,2],
 
 fig.update_layout(title='JAX Collocation: Final Result', scene_aspectmode='data',
                   width=1200, height=900)
+
+# Эталон
+if r_etalon is not None:
+    fig.add_trace(go.Scatter3d(x=r_etalon[:, 0], y=r_etalon[:, 1], z=r_etalon[:, 2],
+                                 mode='lines', line=dict(color='orange', width=2, dash='dot'),
+                                 name='Эталон ЛУ'))
 fig.write_html('collocation_jax_final.html')
 print("\nСохранено: collocation_jax_final.html")
 
@@ -129,23 +143,24 @@ print("\nСохранено: collocation_jax_final.html")
 как выглядело лучшее промежуточное решение.
 """
 
-# snap = load_snapshot('best_snapshot.npz')
-# u_min = E2.u_min
-# scale_u = result['scale_u']
-# scale_v = result['scale_v']
-# X_tail = snap['X_tail']
-# u_snap = np.concatenate([[snap['u0']], u_min + X_tail[0::2] * scale_u])
-# v_snap = np.concatenate([[snap['v0']], X_tail[1::2] * scale_v])
-# pts_snap = np.array([E2.position(u_snap[k], v_snap[k]) for k in range(snap['N'])])
+snap = load_snapshot('best_snapshot.npz')
+u_min = E2.u_min
+tsn_pts = np.array([traj.R(z) for z in snap['z_eval']])
+scale_u = snap['scale_u']
+scale_v = snap['scale_v']
+X_tail = snap['X_tail']
+u_snap = np.concatenate([[snap['u0']], u_min + X_tail[0::2] * scale_u])
+v_snap = np.concatenate([[snap['v0']], X_tail[1::2] * scale_v])
+pts_snap = np.array([E2.position(u_snap[k], v_snap[k]) for k in range(snap['N'])])
 
-# fig2 = go.Figure()
-# fig2.add_trace(go.Surface(x=X2, y=Y2, z=Z2, opacity=0.3, colorscale='Reds', showscale=False))
-# fig2.add_trace(go.Scatter3d(x=tsn_pts[:,0], y=tsn_pts[:,1], z=tsn_pts[:,2],
-#                               mode='lines', line=dict(color='blue', width=4)))
-# fig2.add_trace(go.Scatter3d(x=pts_snap[:,0], y=pts_snap[:,1], z=pts_snap[:,2],
-#                               mode='lines+markers', line=dict(color='orange', width=3),
-#                               marker=dict(size=3), name='ЛУ (SNAPSHOT)'))
-# fig2.update_layout(title=f'JAX Snapshot (iter {snap["iter"]}, max|Phi|={snap["max_Phi"]:.2e})',
-#                    scene_aspectmode='data', width=1200, height=900)
-# fig2.write_html('collocation_jax_snapshot.html')
-# print("Сохранено: collocation_jax_snapshot.html")
+fig2 = go.Figure()
+fig2.add_trace(go.Surface(x=X2, y=Y2, z=Z2, opacity=0.3, colorscale='Reds', showscale=False))
+fig2.add_trace(go.Scatter3d(x=tsn_pts[:,0], y=tsn_pts[:,1], z=tsn_pts[:,2],
+                              mode='lines', line=dict(color='blue', width=4)))
+fig2.add_trace(go.Scatter3d(x=pts_snap[:,0], y=pts_snap[:,1], z=pts_snap[:,2],
+                              mode='lines+markers', line=dict(color='orange', width=3),
+                              marker=dict(size=3), name='ЛУ (SNAPSHOT)'))
+fig2.update_layout(title=f'JAX Snapshot (iter {snap["iter"]}, max|Phi|={snap["max_Phi"]:.2e})',
+                   scene_aspectmode='data', width=1200, height=900)
+fig2.write_html('collocation_jax_snapshot.html')
+print("Сохранено: collocation_jax_snapshot.html")

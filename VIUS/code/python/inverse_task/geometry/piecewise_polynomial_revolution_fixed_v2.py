@@ -108,10 +108,10 @@ class PiecewisePolynomialRevolution(AnalyticalSurface):
 
     def second_fundamental_form(self, u, v):
         r, rp, rpp = self._compute_r_and_derivs(u)
-        denom = np.sqrt(1.0 + rp * rp)
-        L = rpp / denom
+        denom = np.sqrt(1 + rp * rp)
+        L = rpp / denom   # ← меридиан
         M = 0.0
-        N = -r / denom
+        N = -r / denom    # ← параллель
         return L, M, N
 
     def metric_derivatives(self, u, v):

@@ -79,7 +79,7 @@ print(f"Старт: u={u0:.3f}, v={v0:.4f}, Φ={best_Phi:.2e}")
 
 
 # ---------- 4. Каскадная коллокация ----------
-N_levels = [25, 50, 100, 200]
+N_levels = [25]
 result_prev = None
 
 for idx, N in enumerate(N_levels):
@@ -111,7 +111,7 @@ for idx, N in enumerate(N_levels):
     result = solve_collocation_scaled(
         E2, traj, u0, v0,
         count_points=N,
-        w_Phi=1.0, w_diff=1.0, w_smooth=0.05,   # небольшая гладкость подавляет зигзаги
+        w_Phi=0, w_diff=0.3, w_smooth=10,   # небольшая гладкость подавляет зигзаги
         init_method=init_method,
         X0_custom=X0_custom,
         max_nfev=15000,

@@ -31,7 +31,6 @@ def normal_curvature(surface, u, v, u_prime, v_prime):
     return II_val / I_val
 def compute_grad_Phi(surface, u, v, u_prime, v_prime, lam):
     L, M, N_ff = surface.second_fundamental_form(u, v)
-    # g_α = b_{αβ} · τ^β  (ковариантные компоненты градиента)
     dPhidu = -lam * (L * u_prime + M * v_prime)
     dPhidv = -lam * (M * u_prime + N_ff * v_prime)
     return dPhidu, dPhidv
@@ -276,6 +275,8 @@ def newton_corrector(surface, traj, u_pred, v_pred, z_target,
             
             # if u_min is not None and u_max is not None:
             #     u_try = np.clip(u_try, u_min, u_max)
+            if u_min is not None and u_max is not None:   # ← правильно
+                u_try = np.clip(u_try, u_min, u_max)
             # if v_min is not None and v_max is not None:
             #     v_try = np.clip(v_try, v_min, v_max)
             

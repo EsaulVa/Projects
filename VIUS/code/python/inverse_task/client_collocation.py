@@ -3,6 +3,7 @@
 Клиент прямой коллокации для баллона (PiecewisePolynomialRevolution).
 Использует исправленную геометрию (fixed_v2) и ТСН из tsn_shadow.csv.
 """
+from matplotlib import pyplot as plt
 import numpy as np
 import plotly.graph_objects as go
 import pandas as pd
@@ -33,7 +34,7 @@ print(f"E2: u∈[{E2.u_min}, {E2.u_max}], R_cyl={cyl_r_opravka}")
 
 
 # ---------- 2. Загрузка ТСН ----------
-df = pd.read_csv('tsn_shadow_homothetic.csv')
+df = pd.read_csv('tsn_shadow_ellipsoid.csv')
 df_valid = df[df['valid'] == True].copy()
 points_tsn = df_valid[['X', 'Y', 'Z']].values
 print(f"ТСН: {len(points_tsn)} валидных точек")
@@ -59,12 +60,47 @@ dummy = DummyTraj(R0)
 u_guess = float(R0[2])
 v_guess = float(np.arctan2(R0[1], R0[0]))
 
-u0, v0, Phi0, _, conv = newton_corrector(
-    E2, dummy, u_guess, v_guess, 0.0,
-    eps_Phi=1e-10, max_iter=20
-)
-print(f"Старт: u={u0:.3f}, v={v0:.4f}, Φ={Phi0:.2e}, conv={conv}")
+# u0, v0, Phi0, _, conv = newton_corrector(
+#     E2, dummy, u_guess, v_guess, 0.0,
+#     eps_Phi=1e-10, max_iter=20
+# )
+# print(f"Старт: u={u0:.3f}, v={v0:.4f}, Φ={Phi0:.2e}, conv={conv}")
+# ------------------------------------------------------------------
+# 3. Начальная точка: safe_initial_point + коррекция Ньютона
+# ------------------------------------------------------------------
+R0 = traj.R(0.0)
+print(f"R0 (ТСН в z=0): {R0}")
 
+u0, v0 = safe_initial_point(E2, R0)
+print(f"safe_initial_point: u0={u0:.4f}, v0={v0:.4f}")
+
+# Корректируем до Φ = 0
+u0, v0, Phi0, _, conv = newton_corrector(
+    E2, traj, u0, v0, 0.0, eps_Phi=1e-12, max_iter=50
+)
+print(f"После коррекции: u0={u0:.4f}, v0={v0:.4f}, Φ0={Phi0:.2e}, conv={conv}")
+
+if not conv or abs(Phi0) > 1e-8:
+    print("ВНИМАНИЕ: Начальная точка не скорректировалась!")
+    print("Пробуем fallback: поиск в окрестности...")
+    # Fallback: перебор начальных приближений по сетке
+    best_Phi = 1e9
+    best_u, best_v = u0, v0
+    for du in np.linspace(-20, 20, 21):
+        for dv in np.linspace(-0.5, 0.5, 21):
+            try:
+                u_try = np.clip(u0 + du, E2.u_min, E2.u_max)
+                v_try = np.mod(v0 + dv, 2*np.pi)
+                u_c, v_c, Phi_c, _, conv_c = newton_corrector(
+                    E2, traj, u_try, v_try, 0.0, eps_Phi=1e-10, max_iter=20
+                )
+                if conv_c and abs(Phi_c) < best_Phi:
+                    best_Phi = abs(Phi_c)
+                    best_u, best_v = u_c, v_c
+            except Exception:
+                pass
+    u0, v0 = best_u, best_v
+    print(f"Fallback: u0={u0:.4f}, v0={v0:.4f}, |Φ|={best_Phi:.2e}")
 # Проверка compute_dr_dz
 du, dv = compute_dr_dz(E2, traj, u0, v0, 0.0)
 print(f"compute_dr_dz: du={du:.6f}, dv={dv:.6f}")
@@ -76,9 +112,9 @@ print("\n===== Коллокация на баллоне =====")
 # Начнём с N=50 для скорости, потом можно N=100
 result = solve_collocation(
     E2, traj, u0, v0,
-    count_points=20,
-    w_Phi=100.0, w_diff=1e-2, w_smooth=1e-2,
-    init_method='radial',
+    count_points=40,
+    w_Phi=1e-2, w_diff=100, w_smooth=1e-2,
+    init_method='dae',
     max_nfev=100, tol=1e-8,
     verbose=True
 )

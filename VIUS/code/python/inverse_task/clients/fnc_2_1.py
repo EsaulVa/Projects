@@ -2,7 +2,12 @@
 # Обратная задача намотки — v3
 # Аналитический предиктор + корректор Ньютона + бисекция + диагностика
 # ======================================================================
+import sys
+from pathlib import Path
 
+# Добавляем корневую директорию проекта (родительскую по отношению к папке gui)
+root_dir = Path(__file__).parent.parent
+sys.path.insert(0, str(root_dir))
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
