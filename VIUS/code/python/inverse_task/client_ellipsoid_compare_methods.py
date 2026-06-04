@@ -6,7 +6,7 @@ client_ellipsoid_compare_methods.py
 Сравнение двух методов решения обратной задачи намотки
 на примере пары эллипсоидов (E1 внешний, E2 внутренний).
 
-Метод 1: Классический (Савин) — RightHandSideCalculator + SciPySolver
+Метод 1: Классический (Савин) — RightHandSideCalculator + SciPySolver.solve
   • Интегрирование системы (3.41) в параметрах (u,v)
   • Пропорциональная коррекция через k=1.0
   • Адаптивный шаг DOP853
@@ -16,11 +16,8 @@ client_ellipsoid_compare_methods.py
   • Адаптивная бисекция при скачках
   • Квадратичная сходимость корректора
 
-Выход:
-  • Сводная таблица метрик
-  • 3D-сцена сравнения
-  • Графики невязок Φ(s)
-  • Графики отклонения ЛУ от исходной геодезической
+ИСПРАВЛЕНИЕ: используем SciPySolver.solve() напрямую,
+т.к. solve_with_diagnostics() отсутствует в текущей версии.
 """
 
 import numpy as np
@@ -29,6 +26,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import matplotlib.pyplot as plt
 from scipy.interpolate import CubicSpline
+from scipy.integrate import solve_ivp
 from pathlib import Path
 import sys
 
@@ -43,7 +41,6 @@ from solvers.scipy_solver import SciPySolver
 
 # --- Метод 1: классический ---
 from inverse_winding.rhs_calculator import RightHandSideCalculator
-from inverse_winding.inverse_winding_builder import InvWindingLineBuilder, InverseWindingLineBuilder
 
 
 # ======================================================================
@@ -90,54 +87,64 @@ print(f"   Построено {len(s_vals_fwd)} точек, длина ТСН = 
 
 
 # ======================================================================
-# 3. МЕТОД 1: Классический (Савин) — rhs_calculator + SciPySolver
+# 3. МЕТОД 1: Классический (Савин) — rhs_calculator + solve_ivp
 # ======================================================================
-print("\n3. МЕТОД 1: Классический (rhs_calculator + SciPySolver)")
+print("\n3. МЕТОД 1: Классический (rhs_calculator + solve_ivp)")
 
 rhs_calc = RightHandSideCalculator(
     surface=E2,
     trajectory=traj,
-    k=100.0,           # стандартная коррекция Савина
+    k=1.0,
     max_ds_dz=50.0,
     delta_clip=0.999,
     eps=1e-12
 )
 
-solver_inv = SciPySolver(method='DOP853', rtol=1e-8, atol=1e-10)
-builder_inv = InvWindingLineBuilder(
-    surface=E2,
-    trajectory=traj,
-    rhs_calculator=rhs_calc,
-    solver=solver_inv
-)
-
-# Начальная точка на E2 — те же углы, что и на E1
-# (для концентрических эллипсоидов это хорошее приближение)
+# Начальная точка на E2
 u0_m = u0
 v0_m = v0
 
-# Проверка начальной невязки
-r0 = E2.position(u0_m, v0_m)
-R0 = traj.R(0.0)
-m0 = E2.normal(u0_m, v0_m)
-Phi0 = np.dot(R0 - r0, m0)
-print(f"   Начальная невязка Φ₀ = {Phi0:.6e}")
-
-# Корректировка начальной точки (Newton) — для честного сравнения
+# Корректировка начальной точки (Newton)
 from helpers.inverse_method import newton_corrector as nc_savin
 u0_m, v0_m, Phi0_c, _, conv0 = nc_savin(
     E2, traj, u0_m, v0_m, 0.0, eps_Phi=1e-12, max_iter=20
 )
-print(f"   После коррекции: Φ₀ = {Phi0_c:.6e}, conv={conv0}")
+print(f"   Начальная точка: Φ₀ = {Phi0_c:.6e}, conv={conv0}")
 
-# Интегрирование
+# Интегрирование через solve_ivp напрямую
 z_eval = np.linspace(0, traj.total_length, 300)
+
+def rhs_wrapper(z, state):
+    du, dv = rhs_calc(z, state)
+    return [du, dv]
+
 t1_start = time.time()
-z1, lu1 = builder_inv.compute(u0_m, v0_m, z_eval=z_eval)
+sol1 = solve_ivp(
+    rhs_wrapper,
+    [0, traj.total_length],
+    [u0_m, v0_m],
+    method='DOP853',
+    t_eval=z_eval,
+    rtol=1e-8,
+    atol=1e-10
+)
 t1_end = time.time()
 
-# Диагностика: невязки
-z1_res, Phi1 = builder_inv.get_residuals()
+z1 = sol1.t
+uv1 = sol1.y.T
+lu1 = np.array([E2.position(u, v) for u, v in uv1])
+
+# Невязки
+Phi1 = np.zeros(len(z1))
+for i in range(len(z1)):
+    R = traj.R(z1[i])
+    r = lu1[i]
+    m = E2.normal(uv1[i, 0], uv1[i, 1])
+    diff = R - r
+    diff_norm = np.linalg.norm(diff)
+    if diff_norm > 1e-12:
+        Phi1[i] = np.dot(diff / diff_norm, m)
+
 print(f"   Время: {t1_end - t1_start:.3f} с")
 print(f"   Max |Φ| = {np.max(np.abs(Phi1)):.2e}")
 print(f"   Mean |Φ| = {np.mean(np.abs(Phi1)):.2e}")

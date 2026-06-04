@@ -412,15 +412,15 @@ print(f"  bound_opravka = {bound_opravka}")
 print("================================")
 result = inverse_winding_hybrid(
     E2, traj, u0, v0,
-    count_points=60,
+    count_points=200,
     eps_Phi=1e-10,
     max_newton=20,
     max_bisect=7,
-    jump_threshold=1,       # ← вернём строгость
+    jump_threshold=3,       # ← вернём строгость
     predictor_dae=dae_predictor,
     predictor_optical=optical_predictor,
     eps_kappa=1e-7,         # ← оптика включается при |κ_n| < 0.1 (почти плоские участки)
-    u_margin=10.0,          # ← оптика включается у днища/крышки
+    u_margin=20.0,          # ← оптика включается у днища/крышки
     force_optical_after_fail=False  # ← после фейла пробуем DAE снова, не застреваем на оптике
 )
 # 5. Обратная задача на E2
@@ -479,10 +479,10 @@ fig.add_trace(go.Scatter3d(x=line_E2[:,0], y=line_E2[:,1], z=line_E2[:,2],
                            mode='lines', line=dict(color='red', width=4), name='Восстановленная ЛУ'))
 
 # Эталонная линия
-if r_etalon is not None:
-    fig.add_trace(go.Scatter3d(x=r_etalon[:,0], y=r_etalon[:,1], z=r_etalon[:,2],
-                               mode='lines', line=dict(color='orange', width=2, dash='dot'),
-                               name='Эталонная ЛУ'))
+# if r_etalon is not None:
+#     fig.add_trace(go.Scatter3d(x=r_etalon[:,0], y=r_etalon[:,1], z=r_etalon[:,2],
+#                                mode='lines', line=dict(color='orange', width=2, dash='dot'),
+#                                name='Эталонная ЛУ'))
 
 fig.update_layout(title='Гибридная обратная задача (полиномиальный баллон)',
                   scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z', aspectmode='data'),
