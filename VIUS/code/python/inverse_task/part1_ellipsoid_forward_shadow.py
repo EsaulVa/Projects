@@ -204,7 +204,7 @@ def main():
     u0, v0 = np.pi / 3.0, np.pi / 6.0
     alpha = np.pi / 6.0
     s_end = 30.0
-    num_points = 300
+    num_points = 3000
 
     print(f"\nПрямая задача на E2: u0={u0:.4f}, v0={v0:.4f}, alpha={alpha:.4f}, s_end={s_end}")
     s_vals, uv, lu_points = solve_geodesic(E2, u0, v0, alpha, s_end, num_points)
