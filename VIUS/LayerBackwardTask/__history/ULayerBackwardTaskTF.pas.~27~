@@ -1,0 +1,173 @@
+unit ULayerBackwardTaskTF;
+
+interface
+
+{$REGION ' uses '}
+uses // ¬ ¿À‘¿¬»“ÕŒÃ œŒ–ﬂƒ ≈!
+  Buttons,
+  Chart,
+  Classes,
+  ComCtrls,
+  Controls,
+  Dialogs,
+  ExtCtrls,
+  Forms,
+  Graphics,
+  Grids,
+  ImgList,
+  Messages,
+  Series,
+  StdCtrls,
+  SysUtils,
+  TeEngine,
+  TeeProcs,
+  ToolWin,
+  UCAMAPI,
+  UCore,
+  UGUI,
+  ULayersAnalyzerGUI,
+  ULayerTF,
+  USmartControls,
+  UStatusFrame,
+  UTuneFrame,
+  UWindPointsGraphsTFr,
+  Variants,
+  Windows;
+{$ENDREGION ' uses '}
+
+type
+  TLayerBackwardTaskTF = class(TLayerTF)
+    de_PointCount: TDecimalEdit;
+    de_Percentage: TDecimalEdit;
+    de_DeltaZ: TDecimalEdit;
+    de_TapeWidth: TDecimalEdit;
+    ToolButton2: TToolButton;
+    RGLikeBorderLine: TRadioGroup;
+    procedure de_PointCountChange(Sender: TObject);
+    procedure de_PercentageChange(Sender: TObject);
+    procedure de_DeltaZChange(Sender: TObject);
+    procedure de_TapeWidthChange(Sender: TObject);
+    procedure FormCreate(Sender: TObject);
+    procedure ToolButton2Click(Sender: TObject);
+    procedure RGLikeBorderLineClick(Sender: TObject);
+    strict private
+      FTarget: IInterface;
+      FLA: ILayersAnalyzer;
+      FLAGUI: TGUI;
+    strict protected
+      procedure OnUpdateInterface; override;
+      function Calculate: Boolean; override;
+    public
+      constructor Create(AOwner: TComponent); override;
+      function Target: ILayerBackwardTask; inline;
+  end;
+
+implementation
+
+{$R *.dfm}
+
+{$REGION ' uses '}
+uses // ¬ ¿À‘¿¬»“ÕŒÃ œŒ–ﬂƒ ≈!
+  ULayersAnalyzer;
+{$ENDREGION ' uses '}
+
+{ TLayerBackwardTaskTF }
+
+function TLayerBackwardTaskTF.Target: ILayerBackwardTask;
+begin
+  Result := FTarget as ILayerBackwardTask;
+end;
+
+procedure TLayerBackwardTaskTF.ToolButton2Click(Sender: TObject);
+begin
+  if not IsUpdating then
+  begin
+   Target.MS := SelectInstance(IMachineStatesContainer,nil) as IMachineStatesContainer;
+   Target.Machine := SelectInstance(IMachine,nil) as IMachine;
+  end;
+end;
+
+procedure TLayerBackwardTaskTF.de_DeltaZChange(Sender: TObject);
+begin
+  if not IsUpdating then
+  begin
+    Target.DeltaZ := TDecimalEdit(Sender).Value;
+  end;
+end;
+
+procedure TLayerBackwardTaskTF.de_PercentageChange(Sender: TObject);
+begin
+  if not IsUpdating then
+  begin
+    Target.Percentage := TDecimalEdit(Sender).Value;
+  end;
+end;
+
+procedure TLayerBackwardTaskTF.de_PointCountChange(Sender: TObject);
+begin
+  if not IsUpdating then
+  begin
+    Target.PointCount := TDecimalEdit(Sender).Int;
+  end;
+end;
+
+procedure TLayerBackwardTaskTF.de_TapeWidthChange(Sender: TObject);
+begin
+  if not IsUpdating then
+  begin
+    Target.TapeWidth := TDecimalEdit(Sender).Int;
+  end;
+end;
+
+procedure TLayerBackwardTaskTF.FormCreate(Sender: TObject);
+var
+  ts: TTabSheet;
+begin
+  inherited;
+  ts := TTabSheet.Create(WindPointsGraphs.pc_Params);
+  ts.Caption := 'ÿËËÌ‡ ÎÂÌÚ˚';
+  ts.Name := 'ts_Tape';
+  ts.PageControl := WindPointsGraphs.pc_Params;
+  FLAGUI := TLayersAnalyzerGUI.Create(FLA);
+  FLAGUI.Parent := ts;
+  FLAGUI.Align := alClient;
+end;
+
+procedure TLayerBackwardTaskTF.OnUpdateInterface;
+begin
+  inherited;
+  with Target do
+  begin
+    de_PointCount.Value := PointCount;
+    de_Percentage.Value := Percentage;
+    de_DeltaZ.Value := DeltaZ;
+    de_TapeWidth.Value := TapeWidth;
+  end;
+end;
+
+procedure TLayerBackwardTaskTF.RGLikeBorderLineClick(Sender: TObject);
+begin
+  inherited;
+  with Target do
+  begin
+    case RGLikeBorderLine.ItemIndex of
+      0: WindType:=0;
+      1: WindType:=0;
+      2: WindType:=0;
+    end;
+  end;
+end;
+
+function TLayerBackwardTaskTF.Calculate: Boolean;
+begin
+  (Target as ICalculatable).Calculate;
+end;
+
+constructor TLayerBackwardTaskTF.Create(AOwner: TComponent);
+begin
+  inherited;
+  Supports(AOwner, ILayerBackwardTask, FTarget);
+  FLA := TLayersAnalyzer.Create(Self);
+end;
+
+end.

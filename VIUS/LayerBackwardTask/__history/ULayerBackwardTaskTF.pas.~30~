@@ -1,0 +1,123 @@
+unit ULayerBackwardTaskTF;
+
+interface
+
+{$REGION ' uses '}
+uses // ¬ ¿À‘¿¬»“ÕŒÃ œŒ–ﬂƒ ≈!
+  Buttons,
+  Chart,
+  Classes,
+  ComCtrls,
+  Controls,
+  Dialogs,
+  ExtCtrls,
+  Forms,
+  Gauges,
+  Graphics,
+  Grids,
+  ImgList,
+  Messages,
+  Series,
+  StdCtrls,
+  SysUtils,
+  TeEngine,
+  TeeProcs,
+  ToolWin,
+  UCAMAPI,
+  UCore,
+  UGUI,
+  ULayersAnalyzerGUI,
+  ULayerTF,
+  USmartControls,
+  UStatusFrame,
+  UTuneFrame,
+  UWindPointsGraphsTFr,
+  Variants,
+  Windows;
+{$ENDREGION ' uses '}
+
+type
+  TLayerBackwardTaskTF = class(TLayerTF)
+    de_Percentage: TDecimalEdit;
+    de_DeltaZ: TDecimalEdit;
+    p_LayerBackwardTaskParams: TPanel;
+    procedure FormCreate(Sender: TObject);
+    procedure de_PercentageChange(Sender: TObject);
+    procedure de_DeltaZChange(Sender: TObject);
+    strict private
+      FTarget: IInterface;
+      FLA: ILayersAnalyzer;
+      FLAGUI: TGUI;
+    strict protected
+      procedure OnUpdateInterface; override;
+      function Calculate: Boolean; override;
+    public
+      constructor Create(AOwner: TComponent); override;
+      function Target: ILayerBackwardTask; inline;
+  end;
+
+implementation
+
+{$R *.dfm}
+
+{$REGION ' uses '}
+uses // ¬ ¿À‘¿¬»“ÕŒÃ œŒ–ﬂƒ ≈!
+  ULayersAnalyzer;
+{$ENDREGION ' uses '}
+
+{ TLayerBackwardTaskTF }
+
+function TLayerBackwardTaskTF.Target: ILayerBackwardTask;
+begin
+  Result := FTarget as ILayerBackwardTask;
+end;
+
+procedure TLayerBackwardTaskTF.de_DeltaZChange(Sender: TObject);
+begin
+  if IsNotUpdating then
+    Target.DeltaZ := TDecimalEdit(Sender).Value;
+end;
+
+procedure TLayerBackwardTaskTF.de_PercentageChange(Sender: TObject);
+begin
+  if IsNotUpdating then
+    Target.Percentage := TDecimalEdit(Sender).Value;
+end;
+
+procedure TLayerBackwardTaskTF.FormCreate(Sender: TObject);
+var
+  ts: TTabSheet;
+begin
+  inherited;
+  ts := TTabSheet.Create(WindPointsGraphs.pc_Params);
+  ts.Caption := 'ÿËËÌ‡ ÎÂÌÚ˚';
+  ts.Name := 'ts_TapeWidth';
+  ts.PageControl := WindPointsGraphs.pc_Params;
+  FLAGUI := TLayersAnalyzerGUI.Create(FLA);
+  FLAGUI.Parent := ts;
+  FLAGUI.Align := alClient;
+end;
+
+procedure TLayerBackwardTaskTF.OnUpdateInterface;
+begin
+  inherited;
+  with Target do
+  begin
+    de_Percentage.Value := Percentage;
+    de_DeltaZ.Value := DeltaZ;
+  end;
+end;
+
+function TLayerBackwardTaskTF.Calculate: Boolean;
+begin
+  (Target as ICalculatable).Calculate;
+end;
+
+constructor TLayerBackwardTaskTF.Create(AOwner: TComponent);
+begin
+  inherited;
+  Supports(AOwner, ILayerBackwardTask, FTarget);
+  FLA := TLayersAnalyzer.Create(Self);
+end;
+
+end.
