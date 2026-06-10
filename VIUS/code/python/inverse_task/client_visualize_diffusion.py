@@ -17,7 +17,10 @@ import plotly.graph_objects as go
 from pathlib import Path
 
 from geometry.piecewise_polynomial_revolution import PiecewisePolynomialRevolution
-from filters.surface_diffusion_filter import DiffusedRevolutionSurface
+# from filters.surface_diffusion_filter import DiffusedRevolutionSurface
+from filters.surface_diffusion_filter import DiffusedRevolutionSurface, BoundaryCondition
+
+
 
 
 def plot_meridian_profile(base_surface, diffused_surface, N=500):
@@ -200,11 +203,17 @@ def main():
 
     E2 = PiecewisePolynomialRevolution(phi_c_opravka, R_c_opravka, bound_opravka, cyl_r_opravka)
     print(f"Оригинальная поверхность: u ∈ [{E2.u_min:.1f}, {E2.u_max:.1f}]")
-
+    
     # --- Сглаженная поверхность ---
     # tau = 5.0 мм², n_steps = 20  →  полное время t = 100 мм²
     # Для сильного эффекта можно увеличить tau или n_steps
-    E2_smooth = DiffusedRevolutionSurface(E2, N=800, tau=5.0, n_steps=20)
+    # E2_smooth = DiffusedRevolutionSurface(E2, N=800, tau=5.0, n_steps=20)
+    # Концы жёстко зафиксированы, внутри размывается
+    E2_smooth = DiffusedRevolutionSurface(
+        E2, N=800, tau=5.0, n_steps=20,
+        bc_left=BoundaryCondition.dirichlet(0.0),   # значение подменится автоматом
+        bc_right=BoundaryCondition.dirichlet(0.0)
+    )
     print(f"Сглаженная поверхность: s ∈ [{E2_smooth.u_min:.1f}, {E2_smooth.u_max:.1f}]")
 
     # --- Визуализация ---
