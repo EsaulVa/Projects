@@ -146,6 +146,37 @@ classdef DiscreteRevolutionSurface < handle
             v_out = atan2(y, x);
             u_out = z;  % для поверхности вращения u=z напрямую
         end
+        
+        function s_val = s_from_z(obj, z)
+        % Для DiscreteRevolutionSurface параметр u = z, поэтому s_from_z возвращает z
+        % (или можно вычислить длину дуги, но для простоты возвращаем z)
+        s_val = z;
+        end
+         % ------------------------------------------------------------------
+        % Методы для совместимости с интерфейсом Surface (для computeTangentCoeffs, recoverLayer)
+        % ------------------------------------------------------------------
+        function r = getPoint(obj, u, v)
+        r = obj.position(u, v);
+        r = r(:);
+        end
+
+        function n = getNormal(obj, u, v)
+        n = obj.normal(u, v);
+        n = n(:);
+        end
+
+        function [ru, rv] = getFirstDerivatives(obj, u, v)
+        d = obj.derivatives(u, v);
+        ru = d.ru; rv = d.rv;
+        end
+
+        function [E, F, G] = getFirstFundamental(obj, u, v)
+        [E, F, G] = obj.first_fundamental_form(u, v);
+        end
+
+        function [L, M, N] = getSecondFundamental(obj, u, v)
+        [L, M, N] = obj.second_fundamental_form(u, v);
+        end
     end
 
     methods (Access = private)
@@ -172,6 +203,7 @@ classdef DiscreteRevolutionSurface < handle
                 error('order должен быть 1 или 2');
             end
         end
+       
     end
 end
 

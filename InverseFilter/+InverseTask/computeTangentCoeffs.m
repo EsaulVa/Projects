@@ -1,5 +1,5 @@
 function [du, dv] = computeTangentCoeffs(surf, u, v, tau)
-    tau=tau(:)
+    tau=tau(:);
     % tau - единичный касательный вектор в пространстве
     n = surf.getNormal(u, v); n=n(:);
     delta = dot(tau, n);

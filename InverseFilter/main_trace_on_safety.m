@@ -44,24 +44,6 @@ lambda_vals = zeros(num_points, 1);
 valid_mask = false(num_points, 1);
 phi_vals = zeros(num_points, 1);
 
-%% 5. Вспомогательные функции
-% Нормаль к E3 в точке (x,y,z)
-function n = get_normal_E3(E3, x, y, z)
-    v = atan2(y, x);
-    s = E3.s_from_z(z);
-    n = E3.normal(s, v);
-    n = n(:);   % принудительно столбец
-end
-
-% Проекция вектора на касательную плоскость
-function tau_proj = project_to_tangent_plane(tau, n)
-    tau_proj = tau - dot(tau, n) * n;
-    if norm(tau_proj) < 1e-12
-        tau_proj = [1; 0; 0];
-    else
-        tau_proj = tau_proj / norm(tau_proj);
-    end
-end
 
 %% 6. Основной цикл трассировки
 fprintf('Начинаем трассировку %d точек...\n', num_points);
@@ -100,7 +82,7 @@ end
 %     n = get_normal_E3(E3, r_point(1), r_point(2), r_point(3));
 %     tau_proj = project_to_tangent_plane(tau_lu, n);
 % 
-%     % Используем готовую функцию trace_ray (как в main_shadow_trace.m)
+%     % �?спользуем готовую функцию trace_ray (как в main_shadow_trace.m)
 %     [t, pt] = trace_ray(E1, r_point, tau_proj, t_min, t_max);
 % 
 %     if ~isnan(t)
@@ -192,3 +174,22 @@ plot(s_valid, phi_vals(valid_idx), 'b.-', 'MarkerSize', 8);
 xlabel('s (длина дуги ЛУ)'); ylabel('\Phi');
 title('Невязка \Phi(s) = \langle R-r, n \rangle');
 grid on;
+
+%% 5. Вспомогательные функции
+% Нормаль к E3 в точке (x,y,z)
+function n = get_normal_E3(E3, x, y, z)
+    v = atan2(y, x);
+    s = E3.s_from_z(z);
+    n = E3.normal(s, v);
+    n = n(:);   % принудительно столбец
+end
+
+% Проекция вектора на касательную плоскость
+function tau_proj = project_to_tangent_plane(tau, n)
+    tau_proj = tau - dot(tau, n) * n;
+    if norm(tau_proj) < 1e-12
+        tau_proj = [1; 0; 0];
+    else
+        tau_proj = tau_proj / norm(tau_proj);
+    end
+end
